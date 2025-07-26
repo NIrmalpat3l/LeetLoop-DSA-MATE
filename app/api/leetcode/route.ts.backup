@@ -1,0 +1,238 @@
+import { NextRequest, NextResponse } from 'next/server'
+
+const LEETCODE_GRAPHQL_ENDPOINT = 'https://leetcode.com/graphql'
+
+const USER_PROFILE_QUERY = `
+  query userProfileUserQuestionProgressV2($userSlug: String!) {
+    userProfileUserQuestionProgressV2(userSlug: $userSlug) {
+      totalQuestionBeatsPercentage
+      numAcceptedQuestions {
+        count
+        difficulty
+      }
+      numFailedQuestions {
+        count
+        difficulty
+      }
+      numUntouchedQuestions {
+        count
+        difficulty
+      }
+      userSessionBeatsPercentage {
+        difficulty
+        percentage
+      }
+    }
+  }
+`
+
+const USER_CALENDAR_QUERY = `
+  query userProfileCalendar($userSlug: String!, $year: Int) {
+    userProfileCalendar(userSlug: $userSlug, year: $year) {
+      activeYears
+      streak
+      totalActiveDays
+      dccBadges {
+        timestamp
+        badge {
+          name
+          icon
+        }
+      }
+      submissionCalendar
+    }
+  }
+`
+
+const SUBMISSION_STATS_QUERY = `
+  query userProfileUserQuestionSubmissionStats($userSlug: String!) {
+    userProfileUserQuestionSubmissionStats(userSlug: $userSlug) {
+      totalSubmissionNum {
+        difficulty
+        count
+        submissions
+      }
+      acSubmissionNum {
+        difficulty
+        count
+        submissions
+      }
+    }
+  }
+`
+
+const TAG_STATS_QUERY = `
+  query skillStats($userSlug: String!) {
+    skillStats(userSlug: $userSlug) {
+      tagProblemCounts {
+        advanced {
+          tagName
+          tagSlug
+          problemsSolved
+        }
+        intermediate {
+          tagName
+          tagSlug
+          problemsSolved
+        }
+        fundamental {
+          tagName
+          tagSlug
+          problemsSolved
+        }
+      }
+    }
+  }
+`
+
+const LANGUAGE_STATS_QUERY = `
+  query languageStats($userSlug: String!) {
+    languageStats(userSlug: $userSlug) {
+      languageName
+      problemsSolved
+    }
+  }
+`
+
+const ALL_QUESTIONS_COUNT_QUERY = `
+  query allQuestionsCount {
+    allQuestionsCount {
+      difficulty
+      count
+    }
+  }
+`
+
+async function makeGraphQLRequest(query: string, variables: any = {}) {
+  try {
+    console.log('🔄 Making GraphQL request to LeetCode...', { query: query.substring(0, 50), variables })
+    
+    const response = await fetch(LEETCODE_GRAPHQL_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Referer': 'https://leetcode.com/',
+        'Origin': 'https://leetcode.com',
+      },
+      body: JSON.stringify({
+        query,
+        variables,
+      }),
+    })
+
+    if (!response.ok) {
+      console.error('❌ LeetCode API response not OK:', response.status, response.statusText)
+      throw new Error(`LeetCode API error: ${response.status}`)
+    }
+
+    const result = await response.json()
+    console.log('✅ LeetCode API response received')
+    
+    if (result.errors) {
+      console.error('❌ GraphQL errors:', result.errors)
+      throw new Error(`GraphQL errors: ${JSON.stringify(result.errors)}`)
+    }
+
+    return result.data
+  } catch (error) {
+    console.error('💥 Error making GraphQL request:', error)
+    throw error
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json()
+    const { username } = body
+
+    if (!username) {
+      return NextResponse.json(
+        { error: 'Username is required' },
+        { status: 400 }
+      )
+    }
+
+    console.log('🎯 Fetching LeetCode data for user:', username)
+
+    // Fetch all data in parallel for better performance
+    const [
+      userProfile,
+      userCalendar,
+      submissionStats,
+      tagStats,
+      languageStats,
+      allQuestionsCount
+    ] = await Promise.allSettled([
+      makeGraphQLRequest(USER_PROFILE_QUERY, { userSlug: username }),
+      makeGraphQLRequest(USER_CALENDAR_QUERY, { userSlug: username, year: new Date().getFullYear() }),
+      makeGraphQLRequest(SUBMISSION_STATS_QUERY, { userSlug: username }),
+      makeGraphQLRequest(TAG_STATS_QUERY, { userSlug: username }),
+      makeGraphQLRequest(LANGUAGE_STATS_QUERY, { userSlug: username }),
+      makeGraphQLRequest(ALL_QUESTIONS_COUNT_QUERY)
+    ])
+
+    // Process results and handle any failures gracefully
+    const result: any = {}
+
+    if (userProfile.status === 'fulfilled') {
+      result.userProfile = userProfile.value.userProfileUserQuestionProgressV2
+    } else {
+      console.warn('⚠️  Failed to fetch user profile:', userProfile.reason)
+      result.userProfile = null
+    }
+
+    if (userCalendar.status === 'fulfilled') {
+      result.userCalendar = userCalendar.value.userProfileCalendar
+    } else {
+      console.warn('⚠️  Failed to fetch user calendar:', userCalendar.reason)
+      result.userCalendar = null
+    }
+
+    if (submissionStats.status === 'fulfilled') {
+      result.submissionStats = submissionStats.value.userProfileUserQuestionSubmissionStats
+    } else {
+      console.warn('⚠️  Failed to fetch submission stats:', submissionStats.reason)
+      result.submissionStats = null
+    }
+
+    if (tagStats.status === 'fulfilled') {
+      result.tagStats = tagStats.value.skillStats?.tagProblemCounts
+    } else {
+      console.warn('⚠️  Failed to fetch tag stats:', tagStats.reason)
+      result.tagStats = null
+    }
+
+    if (languageStats.status === 'fulfilled') {
+      result.languageStats = languageStats.value.languageStats
+    } else {
+      console.warn('⚠️  Failed to fetch language stats:', languageStats.reason)
+      result.languageStats = []
+    }
+
+    if (allQuestionsCount.status === 'fulfilled') {
+      result.allQuestionsCount = allQuestionsCount.value.allQuestionsCount
+    } else {
+      console.warn('⚠️  Failed to fetch all questions count:', allQuestionsCount.reason)
+      result.allQuestionsCount = []
+    }
+
+    console.log('✅ Successfully compiled LeetCode data for user:', username)
+
+    return NextResponse.json({
+      success: true,
+      data: result,
+      timestamp: new Date().toISOString()
+    })
+
+  } catch (error) {
+    console.error('💥 Error in LeetCode API route:', error)
+    return NextResponse.json(
+      { 
+        error: 'Failed to fetch LeetCode data',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
+      { status: 500 }
+    )
+  }
+}
