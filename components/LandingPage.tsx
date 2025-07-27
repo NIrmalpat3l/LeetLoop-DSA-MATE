@@ -1,10 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Button, Card, CardBody, Divider, Input, Modal, ModalContent, ModalHeader, ModalBody, useDisclosure } from '@nextui-org/react'
 import { motion } from 'framer-motion'
 import { BarChart3, Brain, Calendar, Github, Mail, Target, TrendingUp, Zap } from 'lucide-react'
-import { signUp, signIn, signInWithGitHub, signInWithGoogle } from '@/lib/supabase'
+import { signUp, signIn, signInWithGitHub, signInWithGoogle, supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 
 export default function LandingPage() {
@@ -17,6 +17,44 @@ export default function LandingPage() {
     password: ''
   })
   const router = useRouter()
+
+  // Add auth state listener to handle OAuth redirects
+  useEffect(() => {
+    // Check if user is already logged in
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.user) {
+        console.log('User already logged in, redirecting to dashboard...')
+        window.location.href = '/dashboard'
+        return
+      }
+    }
+
+    // Check for OAuth success parameter - only check session if OAuth was successful
+    const urlParams = new URLSearchParams(window.location.search)
+    if (urlParams.get('auth') === 'success') {
+      console.log('OAuth success detected, checking session...')
+      // Give Supabase a moment to process the session
+      setTimeout(checkUser, 500)
+    }
+    // Remove the else clause - don't auto-check user session on normal page load
+
+    // Listen for auth state changes (for OAuth flow)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        console.log('Auth state changed:', event, session?.user?.email)
+        if (event === 'SIGNED_IN' && session?.user) {
+          // User successfully signed in, redirect to dashboard
+          console.log('Redirecting to dashboard...')
+          setTimeout(() => {
+            window.location.href = '/dashboard'
+          }, 100) // Small delay to ensure state is updated
+        }
+      }
+    )
+
+    return () => subscription.unsubscribe()
+  }, [])
 
   const handleAuth = async () => {
     setLoading(true)
@@ -45,18 +83,23 @@ export default function LandingPage() {
   const handleOAuthSignIn = async (provider: 'github' | 'google') => {
     setLoading(true)
     try {
+      let result
       if (provider === 'github') {
-        const { error } = await signInWithGitHub()
-        if (error) throw error
+        result = await signInWithGitHub()
       } else {
-        const { error } = await signInWithGoogle()
-        if (error) throw error
+        result = await signInWithGoogle()
       }
+      
+      if (result.error) {
+        throw result.error
+      }
+      
+      // OAuth will redirect to callback URL, which will then redirect to dashboard
+      // The auth state listener will handle the final redirect
     } catch (error: any) {
       console.error('OAuth error:', error)
       alert(error.message || 'OAuth authentication failed')
-    } finally {
-      setLoading(false)
+      setLoading(false) // Only set loading to false on error
     }
   }
 

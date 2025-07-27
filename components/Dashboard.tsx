@@ -15,7 +15,34 @@ function Dashboard() {
   const [user, setUser] = useState<any>(null)
 
   useEffect(() => {
-    loadDashboardData()
+    // Handle OAuth session on mount
+    const handleAuthSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session) {
+        // If we have a session, load dashboard data
+        loadDashboardData()
+      }
+    }
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        console.log('Auth state changed:', event, session?.user?.email)
+        if (event === 'SIGNED_IN' && session) {
+          // User just signed in, load dashboard data
+          await loadDashboardData()
+        } else if (event === 'SIGNED_OUT') {
+          // User signed out, redirect to home
+          window.location.href = '/'
+        }
+      }
+    )
+
+    // Initial load
+    handleAuthSession()
+
+    // Cleanup subscription
+    return () => subscription.unsubscribe()
   }, [])
 
   const loadDashboardData = async () => {

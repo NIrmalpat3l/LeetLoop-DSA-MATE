@@ -53,6 +53,13 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
     initializeSystem()
   }, [])
 
+  // Regenerate calendar when viewMode changes
+  useEffect(() => {
+    if (analysisData.length > 0) {
+      generateCalendarData(analysisData, currentCalendarMonth)
+    }
+  }, [viewMode])
+
   const initializeSystem = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -218,15 +225,17 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
       }
       
       const problems = groupedByDate[dateString] || []
-      // Use only category for concept mode
-      const categories = Array.from(new Set(problems.map(p => {
+      
+      // Categories logic - get current viewMode at render time
+      let categories: string[] = []
+      if (problems.length > 0) {
         if (viewMode === 'difficulty') {
-          return p.difficulty
+          categories = Array.from(new Set(problems.map(p => p.difficulty)))
         } else {
-          // Only use category
-          return p.category || 'General'
+          // concept mode - use categories
+          categories = Array.from(new Set(problems.map(p => p.category || 'General')))
         }
-      })))
+      }
       
       const difficultyCount = problems.reduce((acc, p) => {
         const diff = p.difficulty.toLowerCase()
@@ -500,12 +509,14 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
                     variant="bordered"
                     color="primary"
                     onPress={() => {
-                      setViewMode(viewMode === 'difficulty' ? 'concept' : 'difficulty')
-                      generateCalendarData(analysisData, currentCalendarMonth)
+                      const newMode = viewMode === 'difficulty' ? 'concept' : 'difficulty'
+                      setViewMode(newMode)
                     }}
                     className="ml-2"
                     startContent={<ArrowLeftRight className="h-3 w-3" />}
                   >
+                    {viewMode === 'difficulty' ? 'Switch to Concepts' : 'Switch to Difficulty'}
+                  
                   </Button>
                 )}
               </div>
@@ -563,11 +574,7 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
                                 const IconComponent = getCategoryIcon(category)
                                 
                                 return (
-                                  <div 
-                                    key={idx}
-                                    className="p-1 bg-primary/10 rounded-full border border-primary/20"
-                                    title={category}
-                                  >
+                                  <div key={idx} title={category}>
                                     <IconComponent className="h-3 w-3 text-primary" />
                                   </div>
                                 )
