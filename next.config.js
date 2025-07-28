@@ -2,7 +2,8 @@
 const nextConfig = {
   experimental: {
     serverComponentsExternalPackages: [],
-    esmExternals: 'loose'
+    esmExternals: 'loose',
+    optimizeFonts: true
   },
   transpilePackages: ['@nextui-org/react', '@nextui-org/theme', '@nextui-org/system'],
   images: {

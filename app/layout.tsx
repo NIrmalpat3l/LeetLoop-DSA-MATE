@@ -3,7 +3,13 @@ import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import { Providers } from './providers'
 
-const inter = Inter({ subsets: ['latin'] })
+const inter = Inter({ 
+  subsets: ['latin'],
+  display: 'optional',
+  fallback: ['system-ui', 'arial'],
+  adjustFontFallback: false,
+  variable: '--font-inter'
+})
 
 export const metadata: Metadata = {
   title: 'LeetLoop - Progress Tracking Tool',
@@ -43,7 +49,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={inter.className} suppressHydrationWarning>
+      <body className={`${inter.variable} ${inter.className}`} suppressHydrationWarning>
         <Providers>
           {children}
         </Providers>
