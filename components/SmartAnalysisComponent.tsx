@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Card, CardBody, CardHeader, Button, Badge, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from '@nextui-org/react'
 import { Calendar, Target, Sparkles, Code, Database, Layers, Zap, Hash, GitBranch, Cpu, Network, FileText, Type, Binary, Brain, Search, ArrowLeftRight, ArrowRight, Grid, RefreshCw, Clock, Shuffle, BarChart3, TrendingUp, ExternalLink } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import { startOfMonth, endOfMonth, eachDayOfInterval, format, getDay, startOfWeek, endOfWeek } from 'date-fns'
+import { startOfMonth, endOfMonth, eachDayOfInterval, format, startOfWeek, endOfWeek } from 'date-fns'
+import LoadingPage, { InlineLoading } from '@/components/LoadingPage'
 
 interface AnalysisData {
   id: number
@@ -37,13 +38,18 @@ interface CalendarDay {
   difficultyCount: { easy: number; medium: number; hard: number }
 }
 
-export default function SmartAnalysisComponent({ recentSubmissions = [] }: { recentSubmissions: Submission[] }) {
+export default function SmartAnalysisComponent({ 
+  recentSubmissions = [], 
+  onRefreshRequest 
+}: { 
+  recentSubmissions: Submission[]
+  onRefreshRequest?: () => Promise<void>
+}) {
   const [analysisData, setAnalysisData] = useState<AnalysisData[]>([])
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
   const [user, setUser] = useState<any>(null)
-  const [viewMode, setViewMode] = useState<'difficulty' | 'concept'>('difficulty')
-  const [calendarData, setCalendarData] = useState<CalendarDay[]>([])
+  const [viewMode, setViewMode] = useState<'difficulty' | 'concept'>('concept')
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null)
   const [selectedProblem, setSelectedProblem] = useState<AnalysisData | null>(null)
   const [currentCalendarMonth, setCurrentCalendarMonth] = useState(new Date())
@@ -52,13 +58,6 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
   useEffect(() => {
     initializeSystem()
   }, [])
-
-  // Regenerate calendar when viewMode changes
-  useEffect(() => {
-    if (analysisData.length > 0) {
-      generateCalendarData(analysisData, currentCalendarMonth)
-    }
-  }, [viewMode])
 
   const initializeSystem = async () => {
     try {
@@ -79,7 +78,6 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
       } else {
         console.log(`📚 Loaded ${data?.length || 0} existing analyzed problems`)
         setAnalysisData(data || [])
-        generateCalendarData(data || [])
       }
     } catch (error) {
       console.error('Initialization error:', error)
@@ -101,7 +99,6 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
       if (error) throw error
 
       setAnalysisData(data || [])
-      generateCalendarData(data || [])
     } catch (error) {
       console.error('Error loading analyzed problems:', error)
     }
@@ -113,6 +110,12 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
     setAnalyzing(true)
 
     try {
+      // First refresh the data if callback is provided
+      if (onRefreshRequest) {
+        console.log('🔄 Refreshing LeetCode data first...')
+        await onRefreshRequest()
+      }
+
       // Step 1: Get fresh recent submissions from parent component or API
       if (!recentSubmissions.length) {
         console.log('No recent submissions available for sync')
@@ -173,8 +176,6 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
 
       // Step 5: Reload and show updated list
       await loadAnalyzedProblems()
-      // Also regenerate calendar with current month
-      generateCalendarData(analysisData, currentCalendarMonth)
       console.log(`✅ Successfully synced and analyzed ${results.length} new problems`)
 
     } catch (error) {
@@ -184,27 +185,23 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
     }
   }
 
-  const generateCalendarData = (data: AnalysisData[], monthDate = currentCalendarMonth) => {
+  // Memoize calendar data generation
+  const calendarData = useMemo(() => {
+    if (!analysisData.length) return []
+    
     // Get the start and end of the month we want to display
-    const monthStart = startOfMonth(monthDate)
-    const monthEnd = endOfMonth(monthDate)
-    
-    // Get all days in the month
-    const monthDays = eachDayOfInterval({ start: monthStart, end: monthEnd })
-    
-    // Get the start and end of the calendar week view (to fill complete weeks)
-    const calendarStart = startOfWeek(monthStart, { weekStartsOn: 0 }) // Sunday = 0
-    const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 0 })
+    const monthStart = startOfMonth(currentCalendarMonth)
+    const monthEnd = endOfMonth(currentCalendarMonth)
     
     // Get all days to display in the calendar (including empty cells)
+    const calendarStart = startOfWeek(monthStart, { weekStartsOn: 0 })
+    const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 0 })
     const allCalendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd })
     
-    // Group revision data by date string
-    const groupedByDate = data.reduce((acc, item) => {
+    // Group revision data by date string - only once
+    const groupedByDate = analysisData.reduce((acc, item) => {
       const date = item.revision_date
-      if (!acc[date]) {
-        acc[date] = []
-      }
+      if (!acc[date]) acc[date] = []
       acc[date].push(item)
       return acc
     }, {} as Record<string, AnalysisData[]>)
@@ -214,10 +211,9 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
       const dateString = format(day, 'yyyy-MM-dd')
       const isCurrentMonth = day >= monthStart && day <= monthEnd
       
-      // Only show data for current month days
       if (!isCurrentMonth) {
         return {
-          date: '', // Empty for days outside current month
+          date: '',
           problems: [],
           categories: [],
           difficultyCount: { easy: 0, medium: 0, hard: 0 }
@@ -225,17 +221,9 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
       }
       
       const problems = groupedByDate[dateString] || []
-      
-      // Categories logic - get current viewMode at render time
-      let categories: string[] = []
-      if (problems.length > 0) {
-        if (viewMode === 'difficulty') {
-          categories = Array.from(new Set(problems.map(p => p.difficulty)))
-        } else {
-          // concept mode - use categories
-          categories = Array.from(new Set(problems.map(p => p.category || 'General')))
-        }
-      }
+      const categories = Array.from(new Set(problems.map(p => {
+        return viewMode === 'difficulty' ? p.difficulty : (p.category || 'General')
+      })))
       
       const difficultyCount = problems.reduce((acc, p) => {
         const diff = p.difficulty.toLowerCase()
@@ -248,7 +236,12 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
       return { date: dateString, problems, categories, difficultyCount }
     })
 
-    setCalendarData(calendar)
+    return calendar
+  }, [analysisData, currentCalendarMonth, viewMode])
+
+  const generateCalendarData = (data: AnalysisData[], monthDate = currentCalendarMonth, useViewMode = viewMode) => {
+    // This function is now mainly for external calls - internal state is handled by useMemo
+    setCurrentCalendarMonth(monthDate)
   }
 
   const handleDayClick = (day: CalendarDay) => {
@@ -285,108 +278,33 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
     return colors[hash % colors.length] as any
   }
 
-  const getCategoryIcon = (concept: string) => {
+  const getCategoryIcon = useCallback((concept: string) => {
     // Normalize concept name for consistent matching
     const conceptLower = concept.toLowerCase().trim()
     
-    // String manipulation
-    if (conceptLower.includes('string') || conceptLower.includes('substring') || conceptLower.includes('palindrome')) {
-      return Type
-    }
+    // Use a more efficient lookup approach
+    if (conceptLower.includes('string') || conceptLower.includes('substring') || conceptLower.includes('palindrome')) return Type
+    if (conceptLower.includes('array') || conceptLower.includes('subarray') || conceptLower.includes('matrix')) return Code
+    if (conceptLower.includes('tree') || conceptLower.includes('binary tree') || conceptLower.includes('bst') || conceptLower.includes('trie')) return GitBranch
+    if (conceptLower.includes('graph') || conceptLower.includes('dfs') || conceptLower.includes('bfs') || conceptLower.includes('traversal')) return Layers
+    if (conceptLower.includes('dynamic') || conceptLower.includes('dp') || conceptLower.includes('memoization') || conceptLower.includes('optimization')) return Zap
+    if (conceptLower.includes('hash') || conceptLower.includes('map') || conceptLower.includes('dictionary') || conceptLower.includes('frequency')) return Database
+    if (conceptLower.includes('sort') || conceptLower.includes('merge sort') || conceptLower.includes('quick sort')) return Shuffle
+    if (conceptLower.includes('search') || conceptLower.includes('binary search') || conceptLower.includes('find')) return Search
+    if (conceptLower.includes('greedy') || conceptLower.includes('interval') || conceptLower.includes('scheduling')) return Target
+    if (conceptLower.includes('pointer') || conceptLower.includes('two pointer') || conceptLower.includes('fast') || conceptLower.includes('slow')) return ArrowLeftRight
+    if (conceptLower.includes('sliding') || conceptLower.includes('window') || conceptLower.includes('subarray sum')) return Grid
+    if (conceptLower.includes('backtrack') || conceptLower.includes('recursion') || conceptLower.includes('permutation') || conceptLower.includes('combination')) return RefreshCw
+    if (conceptLower.includes('math') || conceptLower.includes('number') || conceptLower.includes('bit') || conceptLower.includes('calculation')) return Binary
+    if (conceptLower.includes('linked') || conceptLower.includes('list') || conceptLower.includes('node')) return GitBranch
+    if (conceptLower.includes('stack') || conceptLower.includes('lifo') || conceptLower.includes('parentheses')) return Layers
+    if (conceptLower.includes('queue') || conceptLower.includes('fifo') || conceptLower.includes('level order')) return ArrowRight
+    if (conceptLower.includes('heap') || conceptLower.includes('priority') || conceptLower.includes('kth')) return TrendingUp
+    if (conceptLower.includes('union') || conceptLower.includes('disjoint') || conceptLower.includes('component')) return Network
+    if (conceptLower.includes('simulation') || conceptLower.includes('implementation') || conceptLower.includes('game')) return Cpu
     
-    // Array operations
-    if (conceptLower.includes('array') || conceptLower.includes('subarray') || conceptLower.includes('matrix')) {
-      return Code
-    }
-    
-    // Tree structures
-    if (conceptLower.includes('tree') || conceptLower.includes('binary tree') || conceptLower.includes('bst') || conceptLower.includes('trie')) {
-      return GitBranch
-    }
-    
-    // Graph algorithms
-    if (conceptLower.includes('graph') || conceptLower.includes('dfs') || conceptLower.includes('bfs') || conceptLower.includes('traversal')) {
-      return Layers
-    }
-    
-    // Dynamic Programming
-    if (conceptLower.includes('dynamic') || conceptLower.includes('dp') || conceptLower.includes('memoization') || conceptLower.includes('optimization')) {
-      return Zap
-    }
-    
-    // Hash tables and maps
-    if (conceptLower.includes('hash') || conceptLower.includes('map') || conceptLower.includes('dictionary') || conceptLower.includes('frequency')) {
-      return Database
-    }
-    
-    // Sorting algorithms
-    if (conceptLower.includes('sort') || conceptLower.includes('merge sort') || conceptLower.includes('quick sort')) {
-      return Shuffle
-    }
-    
-    // Search algorithms
-    if (conceptLower.includes('search') || conceptLower.includes('binary search') || conceptLower.includes('find')) {
-      return Search
-    }
-    
-    // Greedy algorithms
-    if (conceptLower.includes('greedy') || conceptLower.includes('interval') || conceptLower.includes('scheduling')) {
-      return Target
-    }
-    
-    // Two Pointers technique
-    if (conceptLower.includes('pointer') || conceptLower.includes('two pointer') || conceptLower.includes('fast') || conceptLower.includes('slow')) {
-      return ArrowLeftRight
-    }
-    
-    // Sliding Window
-    if (conceptLower.includes('sliding') || conceptLower.includes('window') || conceptLower.includes('subarray sum')) {
-      return Grid
-    }
-    
-    // Backtracking
-    if (conceptLower.includes('backtrack') || conceptLower.includes('recursion') || conceptLower.includes('permutation') || conceptLower.includes('combination')) {
-      return RefreshCw
-    }
-    
-    // Mathematical problems
-    if (conceptLower.includes('math') || conceptLower.includes('number') || conceptLower.includes('bit') || conceptLower.includes('calculation')) {
-      return Binary
-    }
-    
-    // Linked List
-    if (conceptLower.includes('linked') || conceptLower.includes('list') || conceptLower.includes('node')) {
-      return GitBranch
-    }
-    
-    // Stack operations
-    if (conceptLower.includes('stack') || conceptLower.includes('lifo') || conceptLower.includes('parentheses')) {
-      return Layers
-    }
-    
-    // Queue operations
-    if (conceptLower.includes('queue') || conceptLower.includes('fifo') || conceptLower.includes('level order')) {
-      return ArrowRight
-    }
-    
-    // Heap/Priority Queue
-    if (conceptLower.includes('heap') || conceptLower.includes('priority') || conceptLower.includes('kth')) {
-      return TrendingUp
-    }
-    
-    // Union Find / Disjoint Set
-    if (conceptLower.includes('union') || conceptLower.includes('disjoint') || conceptLower.includes('component')) {
-      return Network
-    }
-    
-    // Simulation or Implementation
-    if (conceptLower.includes('simulation') || conceptLower.includes('implementation') || conceptLower.includes('game')) {
-      return Cpu
-    }
-    
-    // Default icon for unmatched concepts
-    return Brain
-  }
+    return Brain // Default icon
+  }, [])
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
@@ -404,6 +322,13 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
     return format(currentCalendarMonth, 'MMMM yyyy')
   }
 
+  // Memoize unique categories for better performance
+  const uniqueCategories = useMemo(() => {
+    return Array.from(new Set(
+      analysisData.map(p => p.category).filter(Boolean)
+    )).slice(0, 8)
+  }, [analysisData])
+
   const navigateMonth = (direction: 'prev' | 'next') => {
     const newMonth = new Date(currentCalendarMonth)
     if (direction === 'prev') {
@@ -412,17 +337,16 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
       newMonth.setMonth(newMonth.getMonth() + 1)
     }
     setCurrentCalendarMonth(newMonth)
-    generateCalendarData(analysisData, newMonth)
   }
 
   if (loading) {
     return (
-      <Card>
-        <CardBody className="text-center p-8">
-          <Brain className="h-12 w-12 text-primary mx-auto mb-4 animate-pulse" />
-          <p>Loading Smart Analysis System...</p>
-        </CardBody>
-      </Card>
+      <LoadingPage 
+        title="Smart Analysis System"
+        message="Initializing AI-powered problem analysis and spaced repetition calendar..."
+        size="md"
+        fullScreen={false}
+      />
     )
   }
 
@@ -472,7 +396,7 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
                 startContent={<RefreshCw className="h-4 w-4" />}
                 className="bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700 shadow-lg px-8 py-3"
               >
-                {analyzing ? 'Analyzing...' : 'Sync & Analyze'}
+                {analyzing ? 'Analyzing...' : 'Analyze New Problems'}
               </Button>
             </div>
           </div>
@@ -509,14 +433,13 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
                     variant="bordered"
                     color="primary"
                     onPress={() => {
-                      const newMode = viewMode === 'difficulty' ? 'concept' : 'difficulty'
-                      setViewMode(newMode)
+                      setViewMode(viewMode === 'difficulty' ? 'concept' : 'difficulty')
                     }}
                     className="ml-2"
                     startContent={<ArrowLeftRight className="h-3 w-3" />}
+                    title={`Switch to ${viewMode === 'difficulty' ? 'category view' : 'difficulty view'}`}
                   >
-                    {viewMode === 'difficulty' ? 'Switch to Concepts' : 'Switch to Difficulty'}
-                  
+                    {viewMode === 'concept' ? 'View by Difficulty' : 'View by Category'}
                   </Button>
                 )}
               </div>
@@ -574,7 +497,11 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
                                 const IconComponent = getCategoryIcon(category)
                                 
                                 return (
-                                  <div key={idx} title={category}>
+                                  <div 
+                                    key={idx}
+                                    className="p-1 bg-primary/10 rounded-full border border-primary/20"
+                                    title={category}
+                                  >
                                     <IconComponent className="h-3 w-3 text-primary" />
                                   </div>
                                 )
@@ -612,9 +539,7 @@ export default function SmartAnalysisComponent({ recentSubmissions = [] }: { rec
                   </>
                 ) : (
                   // Show actual problem categories, not difficulty levels
-                  Array.from(new Set(
-                    analysisData.map(p => p.category).filter(Boolean)
-                  )).slice(0, 8).map((category) => {
+                  uniqueCategories.map((category) => {
                     const IconComponent = getCategoryIcon(category)
                     return (
                       <div key={category} className="flex items-center gap-2">

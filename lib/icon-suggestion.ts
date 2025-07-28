@@ -1,7 +1,19 @@
 import Groq from 'groq-sdk'
 
+// Initialize Groq client with defensive environment variable access
+const getApiKey = () => {
+  if (typeof window === 'undefined') {
+    // Server-side: can access process.env directly
+    return process.env.NEXT_PUBLIC_GROQ_API_KEY || '';
+  } else {
+    // Client-side: use window global or fallback
+    return (window as any).__NEXT_PUBLIC_GROQ_API_KEY__ || process.env.NEXT_PUBLIC_GROQ_API_KEY || '';
+  }
+};
+
 const groq = new Groq({
-  apiKey: process.env.NEXT_PUBLIC_GROQ_API_KEY
+  apiKey: getApiKey(),
+  dangerouslyAllowBrowser: true // Enable client-side usage
 })
 
 // Available Lucide React icons for problem categories

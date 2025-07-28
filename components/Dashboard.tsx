@@ -6,63 +6,69 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cel
 import { Bell, Calendar, TrendingUp, Target, Brain, AlertTriangle, CheckCircle, Clock, LinkIcon, User, LogOut, Code, Trophy, Flame, ArrowRight } from 'lucide-react'
 import { fetchLeetCodeUserData, LeetCodeUserData, generateLeetCodeProblemUrl } from '@/lib/leetcode-api'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth-context'
+import LoadingPage from '@/components/LoadingPage'
+import Navigation from '@/components/Navigation'
 
 function Dashboard() {
+  const { user, loading: authLoading } = useAuth()
   const [leetcodeData, setLeetcodeData] = useState<LeetCodeUserData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [profile, setProfile] = useState<any>(null)
-  const [user, setUser] = useState<any>(null)
 
   useEffect(() => {
-    // Handle OAuth session on mount
-    const handleAuthSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (session) {
-        // If we have a session, load dashboard data
-        loadDashboardData()
-      }
+    // Only load dashboard data when auth state is resolved
+    if (!authLoading) {
+      loadDashboardData()
     }
-
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth state changed:', event, session?.user?.email)
-        if (event === 'SIGNED_IN' && session) {
-          // User just signed in, load dashboard data
-          await loadDashboardData()
-        } else if (event === 'SIGNED_OUT') {
-          // User signed out, redirect to home
-          window.location.href = '/'
-        }
-      }
-    )
-
-    // Initial load
-    handleAuthSession()
-
-    // Cleanup subscription
-    return () => subscription.unsubscribe()
-  }, [])
+  }, [user, authLoading])
 
   const loadDashboardData = async () => {
     try {
       setLoading(true)
       setError('')
       
-      // Load user profile first
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user) // Update user state
+      // Wait a bit for auth state to settle after OAuth redirect
+      await new Promise(resolve => setTimeout(resolve, 500))
+      
+      // Check if user is authenticated
       if (!user) {
         setError('Please log in to view your dashboard')
         return
       }
 
-      const { data: profileData } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
+      // Add retry logic for database queries
+      let profileData = null
+      let retryCount = 0
+      const maxRetries = 3
+      
+      while (retryCount < maxRetries && !profileData) {
+        try {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single()
+          
+          if (error) {
+            console.error(`Profile fetch attempt ${retryCount + 1} failed:`, error)
+            if (retryCount === maxRetries - 1) throw error
+          } else {
+            profileData = data
+          }
+        } catch (dbError) {
+          console.error(`Database error on attempt ${retryCount + 1}:`, dbError)
+          if (retryCount === maxRetries - 1) {
+            throw new Error('Failed to load profile after multiple attempts')
+          }
+        }
+        
+        retryCount++
+        if (!profileData && retryCount < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount))
+        }
+      }
       
       setProfile(profileData)
 
@@ -72,10 +78,17 @@ function Dashboard() {
         return
       }
 
-      // Fetch LeetCode data - with detailed error logging
+      // Fetch LeetCode data - with detailed error logging and retry
       try {
         console.log('🎯 Dashboard: Attempting to fetch LeetCode data for:', profileData.leetcode_username)
-        const data = await fetchLeetCodeUserData(profileData.leetcode_username)
+        
+        // Add timeout to prevent hanging requests
+        const timeoutPromise = new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Request timeout')), 30000)
+        )
+        
+        const dataPromise = fetchLeetCodeUserData(profileData.leetcode_username)
+        const data = await Promise.race([dataPromise, timeoutPromise])
         
         // Verify the data structure
         if (!data) {
@@ -83,9 +96,9 @@ function Dashboard() {
         }
         
         console.log('🎉 Dashboard: Successfully received LeetCode data:', data)
-        console.log('📊 Dashboard: Recent submissions count:', data?.recentSubmissions?.length || 0)
-        console.log('📊 Dashboard: Data source:', data?.source || 'unknown')
-        console.log('📊 Dashboard: First submission:', data?.recentSubmissions?.[0] || 'none')
+        console.log('📊 Dashboard: Recent submissions count:', (data as any)?.recentSubmissions?.length || 0)
+        console.log('📊 Dashboard: Data source:', (data as any)?.source || 'unknown')
+        console.log('📊 Dashboard: First submission:', (data as any)?.recentSubmissions?.[0] || 'none')
         
         setLeetcodeData(data)
       } catch (leetCodeError: any) {
@@ -95,11 +108,22 @@ function Dashboard() {
           stack: leetCodeError?.stack || 'No stack trace',
           name: leetCodeError?.name || 'Unknown error type'
         })
-        setError(`Failed to load LeetCode data: ${leetCodeError?.message || 'Unknown error'}`)
+        
+        // Provide more specific error messages
+        let errorMessage = 'Failed to load LeetCode data'
+        if (leetCodeError?.message?.includes('timeout')) {
+          errorMessage = 'Request timed out. Please check your internet connection and try again.'
+        } else if (leetCodeError?.message?.includes('fetch')) {
+          errorMessage = 'Network error occurred. Please check your connection and try again.'
+        } else if (leetCodeError?.message) {
+          errorMessage = `LeetCode API error: ${leetCodeError.message}`
+        }
+        
+        setError(errorMessage)
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading dashboard:', error)
-      setError('Failed to load dashboard data')
+      setError(`Failed to load dashboard data: ${error.message || 'Unknown error'}`)
     } finally {
       setLoading(false)
     }
@@ -315,14 +339,13 @@ function Dashboard() {
     )
   }
 
-  if (loading) {
+  if (authLoading || loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading your LeetCode data...</p>
-        </div>
-      </div>
+      <LoadingPage 
+        title="Loading Dashboard"
+        message="Please wait while we fetch your LeetCode progress and analytics..."
+        size="lg"
+      />
     )
   }
 
@@ -422,61 +445,7 @@ function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navigation */}
-      <div className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              {/* Login/Logout button in top-left corner */}
-              {user ? (
-                <Button 
-                  variant="ghost" 
-                  onPress={handleSignOut}
-                  startContent={<LogOut className="w-4 h-4" />}
-                  size="sm"
-                  className="text-gray-600 hover:text-gray-900"
-                >
-                  Sign Out
-                </Button>
-              ) : (
-                <Button 
-                  color="primary"
-                  onPress={handleSignIn}
-                  startContent={<User className="w-4 h-4" />}
-                  size="sm"
-                >
-                  Sign In
-                </Button>
-              )}
-              
-              <div className="flex items-center space-x-2">
-                <Brain className="w-8 h-8 text-blue-600" />
-                <span className="text-xl font-bold text-gray-900">LeetLoop</span>
-              </div>
-              <div className="hidden md:flex items-center space-x-6 ml-8">
-                <a href="/dashboard" className="text-blue-600 font-medium">Dashboard</a>
-                <a href="/analysis" className="text-gray-600 hover:text-gray-900">Analysis</a>
-                <a href="/profile" className="text-gray-600 hover:text-gray-900">Profile</a>
-              </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              {profile && (
-                <>
-                  <span className="text-sm text-gray-600">Welcome back, {profile?.full_name || 'User'}!</span>
-                  <Button 
-                    variant="ghost" 
-                    onPress={loadDashboardData}
-                    isLoading={loading}
-                    size="sm"
-                  >
-                    Refresh
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+      <Navigation currentPage="dashboard" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Stats Overview */}

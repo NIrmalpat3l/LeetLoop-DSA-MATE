@@ -35,6 +35,9 @@ import {
   Info
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import LoadingPage from '@/components/LoadingPage'
+import Navigation from '@/components/Navigation'
+import { useAuth } from '@/lib/auth-context'
 
 interface UserProfile {
   id: string
@@ -48,9 +51,9 @@ interface UserProfile {
 }
 
 export default function Profile() {
+  const { user } = useAuth()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [originalProfile, setOriginalProfile] = useState<UserProfile | null>(null)
-  const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -92,8 +95,7 @@ export default function Profile() {
       setError('')
       
       console.log('🔐 Getting authenticated user...')
-      const { data: { user }, error: userError } = await supabase.auth.getUser()
-      setUser(user) // Update user state
+      const { data: { user: authUser }, error: userError } = await supabase.auth.getUser()
       
       if (userError) {
         console.error('❌ Auth error:', userError)
@@ -101,23 +103,23 @@ export default function Profile() {
         return
       }
       
-      if (!user) {
+      if (!authUser) {
         console.error('❌ No authenticated user found')
         setError('Please log in to view your profile')
         return
       }
 
       console.log('✅ User authenticated:', {
-        id: user.id,
-        email: user.email,
-        created_at: user.created_at
+        id: authUser.id,
+        email: authUser.email,
+        created_at: authUser.created_at
       })
 
       console.log('📊 Fetching profile data from database...')
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', user.id)
+        .eq('id', authUser.id)
         .single()
 
       if (error) {
@@ -248,21 +250,6 @@ export default function Profile() {
     }
   }
 
-  const handleSignOut = async () => {
-    console.log('🚪 User signing out...')
-    await supabase.auth.signOut()
-    window.location.href = '/'
-  }
-
-  const handleSignIn = () => {
-    window.location.href = '/'
-  }
-
-  const goToDashboard = () => {
-    console.log('🏠 Navigating to dashboard...')
-    window.location.href = '/dashboard'
-  }
-
   const resetChanges = () => {
     console.log('🔄 Resetting profile changes...')
     if (originalProfile) {
@@ -274,80 +261,28 @@ export default function Profile() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md shadow-2xl border-0">
-          <CardBody className="flex flex-col items-center p-8">
-            <div className="relative">
-              <div className="animate-spin rounded-full h-16 w-16 border-4 border-blue-200 border-t-blue-600"></div>
-              <div className="absolute inset-0 rounded-full h-16 w-16 border-4 border-transparent border-t-blue-400 animate-spin" style={{ animationDelay: '0.15s' }}></div>
-            </div>
-            <Spacer y={4} />
-            <h3 className="text-lg font-semibold text-gray-700">Loading Profile</h3>
-            <p className="text-gray-500 text-center">Please wait while we fetch your data...</p>
-          </CardBody>
-        </Card>
-      </div>
+      <LoadingPage 
+        title="Loading Profile"
+        message="Please wait while we fetch your account settings and preferences..."
+        size="lg"
+      />
     )
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
+      <Navigation currentPage="profile" />
       <div className="max-w-6xl mx-auto px-4 py-8">
-        {/* Header Navigation */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
-          <div className="flex items-center gap-4">
-            {/* Login/Logout button in top-left corner */}
-            {user ? (
-              <Button 
-                variant="ghost" 
-                onPress={handleSignOut}
-                startContent={<LogOut className="w-4 h-4" />}
-                size="sm"
-                className="text-gray-600 hover:text-gray-900"
-              >
-                Sign Out
-              </Button>
-            ) : (
-              <Button 
-                color="primary"
-                onPress={handleSignIn}
-                startContent={<User className="w-4 h-4" />}
-                size="sm"
-              >
-                Sign In
-              </Button>
-            )}
-            
-            <Button
-              variant="light"
-              startContent={<ArrowLeft className="w-4 h-4" />}
-              onPress={goToDashboard}
-              className="text-gray-600 hover:text-gray-800"
-            >
-              Back to Dashboard
-            </Button>
+        {/* Unsaved Changes Indicator */}
+        {hasChanges && (
+          <div className="mb-4 flex justify-center">
+            <Tooltip content="You have unsaved changes">
+              <Chip color="warning" variant="flat" size="lg">
+                Unsaved Changes
+              </Chip>
+            </Tooltip>
           </div>
-          <div className="flex items-center gap-3">
-            {hasChanges && (
-              <Tooltip content="You have unsaved changes">
-                <Chip color="warning" variant="flat" size="sm">
-                  Unsaved Changes
-                </Chip>
-              </Tooltip>
-            )}
-            {profile && (
-              <Button
-                color="danger"
-                variant="light"
-                startContent={<LogOut className="w-4 h-4" />}
-                onPress={handleSignOut}
-                size="sm"
-              >
-                Sign Out
-              </Button>
-            )}
-          </div>
-        </div>
+        )}
 
         {/* Profile Header Card */}
         <Card className="mb-8 shadow-xl border-0 bg-gradient-to-r from-blue-600 to-indigo-600">

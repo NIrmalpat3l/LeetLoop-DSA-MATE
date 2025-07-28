@@ -1,24 +1,63 @@
+import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: NextRequest) {
-  const requestUrl = new URL(request.url)
-  const code = requestUrl.searchParams.get('code')
-  const error = requestUrl.searchParams.get('error')
+  console.log('🔍 Auth callback triggered')
+  try {
+    const { searchParams, origin } = new URL(request.url)
+    const code = searchParams.get('code')
+    const error = searchParams.get('error')
+    const errorDescription = searchParams.get('error_description')
+    
+    console.log('📝 Callback params:', { 
+      code: !!code, 
+      error, 
+      errorDescription, 
+      origin 
+    })
 
-  console.log('OAuth callback received:', { code: !!code, error })
+    // Handle OAuth errors
+    if (error) {
+      console.error('❌ OAuth error in callback:', error, errorDescription)
+      return NextResponse.redirect(`${origin}/?error=${encodeURIComponent(error)}`)
+    }
 
-  // If there's an error, redirect to home with error
-  if (error) {
-    console.error('OAuth error:', error)
-    return NextResponse.redirect(`${requestUrl.origin}/?error=auth_error`)
+    if (code) {
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      )
+      
+      console.log('🔑 Exchanging code for session...')
+      
+      // Add timeout to prevent hanging
+      const exchangePromise = supabase.auth.exchangeCodeForSession(code)
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Session exchange timeout')), 10000)
+      )
+      
+      const { error: exchangeError } = await Promise.race([
+        exchangePromise,
+        timeoutPromise
+      ]) as any
+      
+      if (exchangeError) {
+        console.error('❌ Auth exchange error:', exchangeError)
+        return NextResponse.redirect(`${origin}/?error=${encodeURIComponent('auth_exchange_failed')}`)
+      }
+      console.log('✅ Session exchange successful')
+    }
+
+    // Always redirect to landing page after auth
+    // Landing page will detect auth state and redirect to dashboard
+    console.log(`🚀 Redirecting to landing page`)
+    return NextResponse.redirect(`${origin}/`)
+  } catch (error: any) {
+    console.error('💥 Callback error:', error)
+    const errorParam = encodeURIComponent(error.message || 'callback_error')
+    return NextResponse.redirect(`${request.nextUrl.origin}/?error=${errorParam}`)
   }
-
-  // If there's a code, it means OAuth was successful
-  if (code) {
-    // Redirect to landing page with success parameter so the auth listener can detect it
-    return NextResponse.redirect(`${requestUrl.origin}/?auth=success`)
-  }
-
-  // Default redirect to home
-  return NextResponse.redirect(`${requestUrl.origin}/`)
 }

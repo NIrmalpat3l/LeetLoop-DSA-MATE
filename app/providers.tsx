@@ -3,6 +3,8 @@
 import { NextUIProvider } from '@nextui-org/react'
 import { ThemeProvider as NextThemesProvider } from 'next-themes'
 import { useRouter } from 'next/navigation'
+import { AuthProvider } from '@/lib/auth-context'
+import { ClientEnvProvider } from '@/lib/client-env'
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -10,7 +12,11 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <NextUIProvider navigate={router.push}>
       <NextThemesProvider attribute="class" defaultTheme="light" enableSystem>
-        {children}
+        <ClientEnvProvider>
+          <AuthProvider>
+            {children}
+          </AuthProvider>
+        </ClientEnvProvider>
       </NextThemesProvider>
     </NextUIProvider>
   )

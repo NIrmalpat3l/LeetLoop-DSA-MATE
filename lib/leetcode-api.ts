@@ -122,57 +122,117 @@ export interface LeetCodeUserData {
 export async function fetchLeetCodeUserData(username: string): Promise<LeetCodeUserData> {
   console.log('🎯 Fetching LeetCode data for user:', username)
   
+  // Check cache first
+  const { getCachedLeetCodeData, cacheLeetCodeData } = await import('./cache');
+  const cachedData = getCachedLeetCodeData(username);
+  
+  if (cachedData) {
+    console.log('📦 Using cached LeetCode data for:', username);
+    return cachedData;
+  }
+  
   try {
     console.log('📡 Making API request to /api/leetcode...')
-    const response = await fetch('/api/leetcode', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ username }),
-    })
-
-    console.log('📡 API response status:', response.status, response.statusText)
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('❌ API response error:', errorText)
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`)
-    }
-
-    const result = await response.json()
-    console.log('✅ API response received:', result)
-
-    if (!result.success) {
-      console.error('❌ API returned error:', result.error)
-      throw new Error(result.error || 'API returned error')
-    }
-
-    if (!result.data) {
-      console.error('❌ No data in API response')
-      throw new Error('No data received from API')
-    }
-
-    console.log('🎉 Successfully fetched LeetCode data for:', username)
-    console.log('📊 Data summary:', {
-      hasUserProfile: !!result.data.userProfile,
-      hasUserCalendar: !!result.data.userCalendar,
-      hasSubmissionStats: !!result.data.submissionStats,
-      hasTagStats: !!result.data.tagStats,
-      languageStatsCount: result.data.languageStats?.length || 0,
-      allQuestionsCount: result.data.allQuestionsCount?.length || 0,
-      source: result.source
-    })
-
-    // Add the source field to the data before returning
-    const userData = result.data as LeetCodeUserData
-    userData.source = result.source
     
-    return userData
+    // Add retry logic for network errors
+    let lastError: Error | null = null
+    const maxRetries = 3
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`📡 API request attempt ${attempt}/${maxRetries}`)
+        
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
+        
+        const response = await fetch('/api/leetcode', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username }),
+          signal: controller.signal,
+        })
+        
+        clearTimeout(timeoutId)
+        
+        console.log('📡 API response status:', response.status, response.statusText)
 
-  } catch (error) {
+        if (!response.ok) {
+          const errorText = await response.text()
+          console.error('❌ API response error:', errorText)
+          throw new Error(`API request failed: ${response.status} ${response.statusText}`)
+        }
+
+        const result = await response.json()
+        console.log('✅ API response received:', result)
+
+        if (!result.success) {
+          console.error('❌ API returned error:', result.error)
+          throw new Error(result.error || 'API returned error')
+        }
+
+        if (!result.data) {
+          console.error('❌ No data in API response')
+          throw new Error('No data received from API')
+        }
+
+        console.log('🎉 Successfully fetched LeetCode data for:', username)
+        console.log('📊 Data summary:', {
+          hasUserProfile: !!result.data.userProfile,
+          hasUserCalendar: !!result.data.userCalendar,
+          hasSubmissionStats: !!result.data.submissionStats,
+          hasTagStats: !!result.data.tagStats,
+          languageStatsCount: result.data.languageStats?.length || 0,
+          allQuestionsCount: result.data.allQuestionsCount?.length || 0,
+          source: result.source
+        })
+
+        // Add the source field to the data before returning
+        const userData = result.data as LeetCodeUserData
+        userData.source = result.source
+        
+        // Cache the successful result (15 minute TTL)
+        cacheLeetCodeData(username, userData, 15);
+        
+        return userData
+        
+      } catch (error: any) {
+        lastError = error
+        console.error(`❌ API request attempt ${attempt} failed:`, error.message)
+        
+        // Don't retry on certain errors
+        if (error.name === 'AbortError') {
+          throw new Error('Request timed out. Please check your internet connection.')
+        }
+        
+        if (attempt === maxRetries) {
+          break // Don't retry on last attempt
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = Math.pow(2, attempt) * 1000
+        console.log(`⏳ Waiting ${delay}ms before retry...`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+    
+    // If we get here, all retries failed
+    throw new Error(`Failed to fetch LeetCode data after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`)
+
+  } catch (error: any) {
     console.error('💥 Error fetching LeetCode user data:', error)
-    throw new Error(`Failed to fetch LeetCode data for user: ${username}`)
+    
+    // Provide more specific error messages based on error type
+    if (error.name === 'TypeError' && error.message.includes('fetch')) {
+      throw new Error('Network error: Unable to connect to the server. Please check your internet connection.')
+    }
+    
+    if (error.message.includes('timeout') || error.name === 'AbortError') {
+      throw new Error('Request timed out. Please try again.')
+    }
+    
+    throw new Error(`Failed to fetch LeetCode data: ${error.message || 'Unknown error'}`)
   }
 }
 

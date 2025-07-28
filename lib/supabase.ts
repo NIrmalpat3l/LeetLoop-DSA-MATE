@@ -1,7 +1,22 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+// Get environment variables with fallbacks for client-side
+const getSupabaseUrl = () => {
+  if (typeof window !== 'undefined') {
+    return (window as any).__NEXT_PUBLIC_SUPABASE_URL__ || process.env.NEXT_PUBLIC_SUPABASE_URL!
+  }
+  return process.env.NEXT_PUBLIC_SUPABASE_URL!
+}
+
+const getSupabaseAnonKey = () => {
+  if (typeof window !== 'undefined') {
+    return (window as any).__NEXT_PUBLIC_SUPABASE_ANON_KEY__ || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  }
+  return process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+}
+
+const supabaseUrl = getSupabaseUrl()
+const supabaseAnonKey = getSupabaseAnonKey()
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
@@ -81,22 +96,38 @@ export const signIn = async (email: string, password: string) => {
 }
 
 export const signInWithGitHub = async () => {
+  console.log('🔍 GitHub OAuth initiated')
+  
+  // Use current origin for redirect
+  const currentOrigin = window.location.origin
+  console.log('📍 Current origin:', currentOrigin)
+  
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'github',
     options: {
-      redirectTo: `${window.location.origin}/auth/callback`
+      redirectTo: `${currentOrigin}/auth/callback`
     }
   })
+  
+  console.log('🔄 OAuth response:', { data, error })
   return { data, error }
 }
 
 export const signInWithGoogle = async () => {
+  console.log('🔍 Google OAuth initiated')
+  
+  // Use current origin for redirect
+  const currentOrigin = window.location.origin
+  console.log('📍 Current origin:', currentOrigin)
+  
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
-      redirectTo: `${window.location.origin}/auth/callback`
+      redirectTo: `${currentOrigin}/auth/callback`
     }
   })
+  
+  console.log('🔄 OAuth response:', { data, error })
   return { data, error }
 }
 

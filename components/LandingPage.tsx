@@ -3,14 +3,18 @@
 import { useState, useEffect } from 'react'
 import { Button, Card, CardBody, Divider, Input, Modal, ModalContent, ModalHeader, ModalBody, useDisclosure } from '@nextui-org/react'
 import { motion } from 'framer-motion'
-import { BarChart3, Brain, Calendar, Github, Mail, Target, TrendingUp, Zap } from 'lucide-react'
+import { BarChart3, Brain, Calendar, Github, Mail, Target, TrendingUp, Zap, LogOut, User } from 'lucide-react'
 import { signUp, signIn, signInWithGitHub, signInWithGoogle, supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { useAuth } from '@/lib/auth-context'
+import AuthLoadingPage from './AuthLoadingPage'
 
 export default function LandingPage() {
+  const { user, loading: authLoading } = useAuth()
   const {isOpen, onOpen, onOpenChange} = useDisclosure()
   const [isLogin, setIsLogin] = useState(true)
   const [loading, setLoading] = useState(false)
+  const [oauthLoading, setOauthLoading] = useState(false) // For OAuth redirects
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
@@ -18,43 +22,22 @@ export default function LandingPage() {
   })
   const router = useRouter()
 
-  // Add auth state listener to handle OAuth redirects
+  // Redirect to dashboard if user is already authenticated
   useEffect(() => {
-    // Check if user is already logged in
-    const checkUser = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (session?.user) {
-        console.log('User already logged in, redirecting to dashboard...')
-        window.location.href = '/dashboard'
-        return
-      }
+    if (user && !authLoading) {
+      console.log('✅ User already authenticated, redirecting to dashboard')
+      router.push('/dashboard')
     }
+  }, [user, authLoading, router])
 
-    // Check for OAuth success parameter - only check session if OAuth was successful
-    const urlParams = new URLSearchParams(window.location.search)
-    if (urlParams.get('auth') === 'success') {
-      console.log('OAuth success detected, checking session...')
-      // Give Supabase a moment to process the session
-      setTimeout(checkUser, 500)
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut()
+      // No need to redirect - auth context will handle the state change
+    } catch (error) {
+      console.error('Error signing out:', error)
     }
-    // Remove the else clause - don't auto-check user session on normal page load
-
-    // Listen for auth state changes (for OAuth flow)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        console.log('Auth state changed:', event, session?.user?.email)
-        if (event === 'SIGNED_IN' && session?.user) {
-          // User successfully signed in, redirect to dashboard
-          console.log('Redirecting to dashboard...')
-          setTimeout(() => {
-            window.location.href = '/dashboard'
-          }, 100) // Small delay to ensure state is updated
-        }
-      }
-    )
-
-    return () => subscription.unsubscribe()
-  }, [])
+  }
 
   const handleAuth = async () => {
     setLoading(true)
@@ -81,26 +64,39 @@ export default function LandingPage() {
   }
 
   const handleOAuthSignIn = async (provider: 'github' | 'google') => {
-    setLoading(true)
+    setOauthLoading(true) // Show auth loading page
+    
+    // Close modal immediately to avoid UI conflicts
+    onOpenChange()
+    
     try {
-      let result
+      console.log(`🔄 Starting ${provider} OAuth flow...`)
+      
       if (provider === 'github') {
-        result = await signInWithGitHub()
+        const { error } = await signInWithGitHub()
+        if (error) {
+          console.error('GitHub OAuth error:', error)
+          throw error
+        }
       } else {
-        result = await signInWithGoogle()
+        const { error } = await signInWithGoogle()
+        if (error) {
+          console.error('Google OAuth error:', error)
+          throw error
+        }
       }
       
-      if (result.error) {
-        throw result.error
-      }
+      console.log(`✅ ${provider} OAuth initiated successfully`)
       
-      // OAuth will redirect to callback URL, which will then redirect to dashboard
-      // The auth state listener will handle the final redirect
     } catch (error: any) {
       console.error('OAuth error:', error)
-      alert(error.message || 'OAuth authentication failed')
-      setLoading(false) // Only set loading to false on error
+      setOauthLoading(false) // Reset loading state on error
+      
+      // Show user-friendly error message
+      const errorMessage = error.message || `${provider} authentication failed. Please try again.`
+      alert(errorMessage)
     }
+    // Don't set loading false here - let auth redirect handle it
   }
 
   const features = [
@@ -136,6 +132,11 @@ export default function LandingPage() {
     }
   ]
 
+  // Show auth loading page during OAuth flow
+  if (oauthLoading) {
+    return <AuthLoadingPage />
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
       {/* Navigation */}
@@ -147,25 +148,50 @@ export default function LandingPage() {
               <span className="text-xl font-bold text-gray-900">LeetLoop</span>
             </div>
             <div className="flex items-center space-x-4">
-              <Button
-                variant="ghost"
-                className="text-gray-700 hover:text-gray-900 hover:bg-gray-100 border-gray-300"
-                onPress={() => {
-                  setIsLogin(true)
-                  onOpen()
-                }}
-              >
-                Log In
-              </Button>
-              <Button
-                className="bg-blue-600 hover:bg-blue-700 text-white font-medium"
-                onPress={() => {
-                  setIsLogin(false)
-                  onOpen()
-                }}
-              >
-                Sign Up
-              </Button>
+              {user ? (
+                // Show user menu when logged in
+                <>
+                  <Button
+                    variant="ghost"
+                    className="text-gray-700 hover:text-gray-900 hover:bg-gray-100"
+                    onPress={() => router.push('/dashboard')}
+                  >
+                    <User className="w-4 h-4 mr-2" />
+                    Dashboard
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="text-gray-700 hover:text-gray-900 hover:bg-gray-100"
+                    onPress={handleSignOut}
+                  >
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Sign Out
+                  </Button>
+                </>
+              ) : (
+                // Show login/signup when not logged in
+                <>
+                  <Button
+                    variant="ghost"
+                    className="text-gray-700 hover:text-gray-900 hover:bg-gray-100 border-gray-300"
+                    onPress={() => {
+                      setIsLogin(true)
+                      onOpen()
+                    }}
+                  >
+                    Log In
+                  </Button>
+                  <Button
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-medium"
+                    onPress={() => {
+                      setIsLogin(false)
+                      onOpen()
+                    }}
+                  >
+                    Sign Up
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -190,21 +216,36 @@ export default function LandingPage() {
               and maintain peak performance with our spaced repetition system.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button
-                size="lg"
-                className="text-lg px-8 py-6 text-white bg-blue-600 hover:bg-blue-700 font-medium"
-                onPress={() => {
-                  setIsLogin(false)
-                  onOpen()
-                }}
-              >
-                Get Started Free
-              </Button>
+              {user ? (
+                // Show dashboard button when logged in
+                <Button
+                  size="lg"
+                  className="text-lg px-8 py-6 text-white bg-blue-600 hover:bg-blue-700 font-medium"
+                  onPress={() => router.push('/dashboard')}
+                  disabled={loading || oauthLoading}
+                >
+                  Go to Dashboard
+                </Button>
+              ) : (
+                // Show get started when not logged in
+                <Button
+                  size="lg"
+                  className="text-lg px-8 py-6 text-white bg-blue-600 hover:bg-blue-700 font-medium"
+                  onPress={() => {
+                    setIsLogin(false)
+                    onOpen()
+                  }}
+                  disabled={loading || oauthLoading}
+                >
+                  Get Started Free
+                </Button>
+              )}
               <Button
                 size="lg"
                 variant="bordered"
                 className="text-lg px-8 py-6 border-gray-300 text-gray-700 hover:bg-gray-50 font-medium"
-                onPress={() => window.open('/dashboard', '_blank')}
+                onPress={() => router.push('/dashboard')}
+                disabled={loading || oauthLoading}
               >
                 <Github className="w-5 h-5 mr-2" />
                 View Demo
@@ -302,16 +343,26 @@ export default function LandingPage() {
           <p className="text-xl text-gray-600 mb-8">
             Join thousands of developers who are already using smart repetition to master algorithms.
           </p>
-          <Button
-            size="lg"
-            className="text-lg px-8 py-6 bg-blue-600 hover:bg-blue-700 text-white font-medium"
-            onPress={() => {
-              setIsLogin(false)
-              onOpen()
-            }}
-          >
-            Start Your Journey
-          </Button>
+          {user ? (
+            <Button
+              size="lg"
+              className="text-lg px-8 py-6 bg-blue-600 hover:bg-blue-700 text-white font-medium"
+              onPress={() => router.push('/dashboard')}
+            >
+              Continue Your Journey
+            </Button>
+          ) : (
+            <Button
+              size="lg"
+              className="text-lg px-8 py-6 bg-blue-600 hover:bg-blue-700 text-white font-medium"
+              onPress={() => {
+                setIsLogin(false)
+                onOpen()
+              }}
+            >
+              Start Your Journey
+            </Button>
+          )}
         </div>
       </section>
 
@@ -386,7 +437,8 @@ export default function LandingPage() {
                       variant="bordered" 
                       className="w-full border-gray-300 text-gray-700 hover:bg-gray-50 font-medium"
                       onPress={() => handleOAuthSignIn('github')}
-                      isLoading={loading}
+                      isLoading={loading || oauthLoading}
+                      disabled={loading || oauthLoading}
                     >
                       <Github className="w-4 h-4 mr-2" />
                       Continue with GitHub
@@ -395,7 +447,8 @@ export default function LandingPage() {
                       variant="bordered" 
                       className="w-full border-gray-300 text-gray-700 hover:bg-gray-50 font-medium"
                       onPress={() => handleOAuthSignIn('google')}
-                      isLoading={loading}
+                      isLoading={loading || oauthLoading}
+                      disabled={loading || oauthLoading}
                     >
                       <Mail className="w-4 h-4 mr-2" />
                       Continue with Google

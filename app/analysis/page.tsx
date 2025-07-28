@@ -2,30 +2,38 @@
 
 import { useState, useEffect } from 'react'
 import { Card, CardBody, CardHeader, Button, Badge, Chip, Divider } from '@nextui-org/react'
-import { Brain, Calendar, Clock, Lightbulb, ArrowRight, Sparkles, LinkIcon, ChevronDown, ChevronUp, User, LogOut, Target } from 'lucide-react'
+import { Calendar, Clock, Lightbulb, ArrowRight, Sparkles, LinkIcon, ChevronDown, ChevronUp, Target, RefreshCw } from 'lucide-react'
 import { fetchLeetCodeUserData, LeetCodeUserData, getMockLeetCodeData } from '@/lib/leetcode-api'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth-context'
+import Navigation from '@/components/Navigation'
 import SmartAnalysisComponent from '@/components/SmartAnalysisComponent'
+import LoadingPage from '@/components/LoadingPage'
+
+// Force dynamic rendering
+export const dynamic = 'force-dynamic'
 
 function AnalysisPage() {
+  const { user, loading: authLoading } = useAuth()
   const [leetcodeData, setLeetcodeData] = useState<LeetCodeUserData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [profile, setProfile] = useState<any>(null)
-  const [user, setUser] = useState<any>(null)
+  const [dataLoaded, setDataLoaded] = useState(false)
 
   useEffect(() => {
-    loadAnalysisData()
-  }, [])
+    // Only load once when auth state is resolved and we haven't loaded data yet
+    if (!authLoading && !dataLoaded) {
+      loadAnalysisData()
+    }
+  }, [authLoading, dataLoaded])
 
   const loadAnalysisData = async () => {
     try {
       setLoading(true)
       setError('')
       
-      // Load user profile first
-      const { data: { user } } = await supabase.auth.getUser()
-      setUser(user)
+      // Check if user is authenticated
       if (!user) {
         setError('Please log in to view your analysis')
         return
@@ -59,6 +67,7 @@ function AnalysisPage() {
         console.log('📝 Analysis: Recent submissions sample:', data?.recentSubmissions?.slice(0, 3))
         
         setLeetcodeData(data)
+        setDataLoaded(true) // Mark data as loaded
       } catch (leetCodeError: any) {
         console.error('❌ Analysis: LeetCode API error:', leetCodeError)
         setError(`Failed to fetch LeetCode data: ${leetCodeError.message}. Please check your username and try again.`)
@@ -69,6 +78,18 @@ function AnalysisPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleRefresh = async () => {
+    console.log('🔄 Manual refresh triggered')
+    setDataLoaded(false) // Reset data loaded flag
+    await loadAnalysisData()
+  }
+
+  const handleRefreshAndAnalyze = async () => {
+    console.log('🔄 Comprehensive refresh and analysis triggered')
+    setDataLoaded(false) // Reset data loaded flag
+    await loadAnalysisData()
   }
 
   const handleSignOut = async () => {
@@ -86,12 +107,11 @@ function AnalysisPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading your analysis data...</p>
-        </div>
-      </div>
+      <LoadingPage 
+        title="Loading Analysis"
+        message="Please wait while we process your LeetCode data and generate AI-powered insights..."
+        size="lg"
+      />
     )
   }
 
@@ -100,43 +120,7 @@ function AnalysisPage() {
     
     return (
       <div className="min-h-screen bg-gray-50">
-        {/* Simple Navigation */}
-        <div className="bg-white shadow-sm border-b">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <div className="flex items-center space-x-2">
-                  <Brain className="w-8 h-8 text-blue-600" />
-                  <span className="text-xl font-bold text-gray-900">LeetLoop</span>
-                </div>
-                <div className="hidden md:flex items-center space-x-6 ml-8">
-                  <a href="/dashboard" className="text-gray-600 hover:text-gray-900">Dashboard</a>
-                  <a href="/analysis" className="text-blue-600 font-medium">Analysis</a>
-                  <a href="/profile" className="text-gray-600 hover:text-gray-900">Profile</a>
-                </div>
-              </div>
-              {isAuthError ? (
-                <Button 
-                  color="primary"
-                  onPress={handleSignIn}
-                  startContent={<User className="w-4 h-4" />}
-                  size="sm"
-                >
-                  Sign In
-                </Button>
-              ) : (
-                <Button 
-                  variant="ghost" 
-                  onPress={handleSignOut}
-                  startContent={<LogOut className="w-4 h-4" />}
-                  size="sm"
-                >
-                  Sign Out
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
+        <Navigation currentPage="analysis" />
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center py-12">
@@ -156,18 +140,27 @@ function AnalysisPage() {
                   color="primary" 
                   onPress={handleSignIn}
                   className="font-medium"
-                  startContent={<User className="w-4 h-4" />}
                 >
                   Sign In
                 </Button>
               ) : (
-                <Button 
-                  color="primary" 
-                  onPress={() => window.location.href = '/profile'}
-                  className="font-medium"
-                >
-                  Go to Profile Settings
-                </Button>
+                <div className="flex gap-3">
+                  <Button 
+                    color="primary" 
+                    onPress={() => window.location.href = '/profile'}
+                    className="font-medium"
+                  >
+                    Go to Profile Settings
+                  </Button>
+                  <Button 
+                    variant="bordered"
+                    onPress={handleRefresh}
+                    className="font-medium"
+                    isLoading={loading}
+                  >
+                    Try Again
+                  </Button>
+                </div>
               )}
             </div>
           </div>
@@ -178,65 +171,41 @@ function AnalysisPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Navigation */}
-      <div className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              {/* Login/Logout button in top-left corner */}
-              {user ? (
-                <Button 
-                  variant="ghost" 
-                  onPress={handleSignOut}
-                  startContent={<LogOut className="w-4 h-4" />}
-                  size="sm"
-                  className="text-gray-600 hover:text-gray-900"
-                >
-                  Sign Out
-                </Button>
-              ) : (
-                <Button 
-                  color="primary"
-                  onPress={handleSignIn}
-                  startContent={<User className="w-4 h-4" />}
-                  size="sm"
-                >
-                  Sign In
-                </Button>
-              )}
-              
-              <div className="flex items-center space-x-2">
-                <Brain className="w-8 h-8 text-blue-600" />
-                <span className="text-xl font-bold text-gray-900">LeetLoop</span>
-              </div>
-              <div className="hidden md:flex items-center space-x-6 ml-8">
-                <a href="/dashboard" className="text-gray-600 hover:text-gray-900">Dashboard</a>
-                <a href="/analysis" className="text-blue-600 font-medium">Analysis</a>
-                <a href="/profile" className="text-gray-600 hover:text-gray-900">Profile</a>
-              </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              {profile && (
-                <>
-                  <span className="text-sm text-gray-600">Welcome back, {profile?.full_name || 'User'}!</span>
-                  <Button 
-                    variant="ghost" 
-                    onPress={loadAnalysisData}
-                    isLoading={loading}
-                    size="sm"
-                  >
-                    Refresh
-                  </Button>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
+      <Navigation currentPage="analysis" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Smart Analysis Component */}
-        <SmartAnalysisComponent recentSubmissions={leetcodeData?.recentSubmissions || []} />
+        {loading ? (
+          <LoadingPage 
+            title="Loading Your Analysis" 
+            message="Fetching your LeetCode data and generating insights..." 
+            size="lg" 
+          />
+        ) : (
+          <>
+            {/* Header with refresh button */}
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Performance Analysis</h1>
+                <p className="text-gray-600">Insights based on your LeetCode activity</p>
+              </div>
+              <Button
+                variant="bordered"
+                onPress={handleRefreshAndAnalyze}
+                isLoading={loading}
+                startContent={!loading ? <RefreshCw className="w-4 h-4" /> : undefined}
+                className="text-gray-600 hover:text-gray-900"
+              >
+                Sync LeetCode Data
+              </Button>
+            </div>
+            
+            {/* Smart Analysis Component */}
+            <SmartAnalysisComponent 
+              recentSubmissions={leetcodeData?.recentSubmissions || []} 
+              onRefreshRequest={handleRefreshAndAnalyze}
+            />
+          </>
+        )}
       </div>
     </div>
   )
