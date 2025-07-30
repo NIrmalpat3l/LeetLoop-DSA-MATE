@@ -1,4 +1,4 @@
-# 🚀 LeetLoop - Smart LeetCode Progress Tracker
+# 🚀 [LeetLoop](https://leetloop.vercel.app) - Smart LeetCode Progress Tracker
 
 <div align="center">
 
@@ -12,7 +12,7 @@
 
 **AI-powered LeetCode progress tracking with spaced repetition for optimal coding skill retention**
 
-[Live Demo](https://leetloop.vercel.app) • [Features](#features) • [Installation](#installation) • [Contributing](#contributing)
+[🚀 Live Demo](https://leetloop.vercel.app) • [✨ Features](#features) • [📦 Installation](#installation) • [🤝 Contributing](#contributing)
 
 </div>
 
@@ -62,7 +62,7 @@ Research shows that spaced repetition is the most effective way to move informat
 - Direct LeetCode API integration
 - Automatic submission tracking
 - Real-time data synchronization
-- GitHub and Google OAuth authentication
+- Supabase OAuth authentication (GitHub, Google, Email)
 
 ### 🎨 **Modern UI/UX**
 - Responsive design with NextUI components
@@ -73,13 +73,19 @@ Research shows that spaced repetition is the most effective way to move informat
 ## 📸 Screenshots
 
 ### Dashboard Overview
-![Dashboard](https://via.placeholder.com/800x400/0070f3/ffffff?text=Dashboard+Screenshot)
+![Dashboard Overview 1](./screenshots/Dashboard-1.png)
+*Main dashboard showing LeetCode statistics and progress charts*
+
+![Dashboard Overview 2](./screenshots/Dashboard-2.png)
+*Detailed analytics with difficulty distribution and topic analysis*
 
 ### AI Analysis View
-![Analysis](https://via.placeholder.com/800x400/7c3aed/ffffff?text=AI+Analysis+Screenshot)
+![AI Analysis](./screenshots/Analysis.png)
+*AI-powered problem analysis and concept categorization*
 
-### Revision Calendar
-![Calendar](https://via.placeholder.com/800x400/059669/ffffff?text=Calendar+Screenshot)
+### Problem Calendar
+![Calendar](./screenshots/Calander.png)
+*Interactive calendar for tracking problem-solving progress*
 
 ## 🛠 Tech Stack
 
@@ -119,8 +125,8 @@ Research shows that spaced repetition is the most effective way to move informat
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/leetloop.git
-   cd leetloop
+   git clone https://github.com/NIrmalpat3l/LeetLoop-DSA-MATE.git
+   cd LeetLoop-DSA-MATE
    ```
 
 2. **Install dependencies**
@@ -157,15 +163,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 # Groq API Configuration
 GROQ_API_KEY=your_groq_api_key
 
-# LeetCode API (Optional - for enhanced features)
-LEETCODE_API_KEY=your_leetcode_api_key
-
-# Authentication (Optional - for OAuth)
-NEXTAUTH_SECRET=your_nextauth_secret
-GITHUB_ID=your_github_oauth_id
-GITHUB_SECRET=your_github_oauth_secret
-GOOGLE_ID=your_google_oauth_id
-GOOGLE_SECRET=your_google_oauth_secret
+# Optional: Additional configuration
+NODE_ENV=development
 ```
 
 ### Supabase Database Schema
@@ -217,9 +216,9 @@ create policy "Users can update own analysis" on problem_analysis for update usi
 ## 📖 Usage
 
 ### 1. **Account Setup**
-- Sign up using email, GitHub, or Google
+- Sign up using email, GitHub, or Google OAuth
 - Add your LeetCode username in profile settings
-- System automatically syncs your submissions
+- System automatically syncs your LeetCode submissions
 
 ### 2. **Dashboard Features**
 - View comprehensive progress statistics
@@ -228,16 +227,16 @@ create policy "Users can update own analysis" on problem_analysis for update usi
 - Analyze problem-solving patterns
 
 ### 3. **AI Analysis**
-- Click "Sync & Analyze" to process submissions
+- Click "Sync Data" to process submissions
 - Get AI-powered categorization and difficulty assessment
 - Receive personalized study recommendations
 - Track concept mastery over time
 
-### 4. **Revision Calendar**
-- Switch between difficulty and concept views
-- Click calendar days to see scheduled problems
+### 4. **Problem Analysis & Review**
+- Navigate to Analysis page for detailed insights
+- Review concept-based problem categorization
 - Follow spaced repetition recommendations
-- Track completion and progress
+- Track your learning progress over time
 
 ## 🔗 API Documentation
 
@@ -313,75 +312,16 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/yourusername/leetloop/issues)
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/yourusername/leetloop/discussions)
-- 📧 **Email**: support@leetloop.dev
+- 🐛 **Bug Reports**: [GitHub Issues](https://github.com/NIrmalpat3l/LeetLoop-DSA-MATE/issues)
+- 💬 **Discussions**: [GitHub Discussions](https://github.com/NIrmalpat3l/LeetLoop-DSA-MATE/discussions)
+- 📧 **Email**: nspatel3030@gmail.com
 
 ---
 
 <div align="center">
 
-**[⭐ Star this repo](https://github.com/yourusername/leetloop)** if you find it helpful!
+**[⭐ Star this repo](https://github.com/NIrmalpat3l/LeetLoop-DSA-MATE)** if you find it helpful!
 
-Made with ❤️ by [Your Name](https://github.com/yourusername)
+Made with ❤️ by [Nirmal Patel](https://github.com/NIrmalpat3l)
 
 </div>
-
-A comprehensive web application for tracking LeetCode progress with spaced repetition notifications to help maintain and improve coding skills.
-
-## Features
-
-- **Progress Dashboard**: Visual charts showing problem-solving statistics by category
-- **Spaced Repetition**: Smart notifications to revisit topics based on forgetting curve
-- **LeetCode Integration**: Direct API integration for real-time progress tracking
-- **Performance Analytics**: Detailed insights into solving patterns and accuracy
-- **Concept Review System**: Organized approach to revisiting weak areas
-
-## Tech Stack
-
-- **Frontend**: Next.js 14, React 18, TypeScript
-- **UI Components**: NextUI, Tailwind CSS
-- **Charts**: Recharts
-- **Authentication**: NextAuth.js
-- **API Integration**: LeetCode GraphQL API
-
-## Getting Started
-
-1. Install dependencies:
-```bash
-npm install
-```
-
-2. Run the development server:
-```bash
-npm run dev
-```
-
-3. Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-## Project Structure
-
-```
-├── pages/              # Next.js pages
-├── components/         # Reusable components
-├── lib/               # Utility functions and API calls
-├── types/             # TypeScript type definitions
-├── styles/            # Global styles
-└── public/            # Static assets
-```
-
-## API Integration
-
-The application integrates with LeetCode's GraphQL API to fetch:
-- User statistics
-- Problem submissions
-- Contest performance
-- Topic-wise progress
-
-## Spaced Repetition Algorithm
-
-The tool implements a spaced repetition system based on:
-- Time since last practice
-- Topic difficulty
-- Personal success rate
-- Forgetting curve principles
