@@ -4,23 +4,29 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Card, CardBody, CardHeader, Button, Badge, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from '@nextui-org/react'
 import { Calendar, Target, Sparkles, Code, Database, Layers, Zap, Hash, GitBranch, Cpu, Network, FileText, Type, Binary, Brain, Search, ArrowLeftRight, ArrowRight, Grid, RefreshCw, Clock, Shuffle, BarChart3, TrendingUp, ExternalLink } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { useAuth } from '@/lib/auth-context'
 import { startOfMonth, endOfMonth, eachDayOfInterval, format, startOfWeek, endOfWeek } from 'date-fns'
 import LoadingPage, { InlineLoading } from '@/components/LoadingPage'
 
 interface AnalysisData {
   id: number
+  leetcode_username: string
   problem_title: string
   problem_slug: string
+  problem_url?: string
   difficulty: string
-  category: string
-  concepts_analysis: {
+  analysis_result: {
     concepts: string[]
     algorithm: string
     approach: string
     core_concept: string
+    category?: string
+    estimated_next_recall_date?: string
+    full_analysis?: any
   }
-  revision_date: string
   analyzed_at: string
+  created_at: string
+  updated_at: string
 }
 
 interface Submission {
@@ -48,7 +54,8 @@ export default function SmartAnalysisComponent({
   const [analysisData, setAnalysisData] = useState<AnalysisData[]>([])
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
-  const [user, setUser] = useState<any>(null)
+  const [dbError, setDbError] = useState<string | null>(null)
+  const { user, profile } = useAuth()
   const [viewMode, setViewMode] = useState<'difficulty' | 'concept'>('concept')
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null)
   const [selectedProblem, setSelectedProblem] = useState<AnalysisData | null>(null)
@@ -56,56 +63,92 @@ export default function SmartAnalysisComponent({
   const { isOpen, onOpen, onClose } = useDisclosure()
 
   useEffect(() => {
-    initializeSystem()
-  }, [])
+    if (profile?.leetcode_username) {
+      // Clear previous profile's data first
+      setAnalysisData([])
+      setSelectedDay(null)
+      setSelectedProblem(null)
+      setDbError(null)
+      // Initialize for new profile
+      initializeSystem()
+    } else {
+      // Clear all data when profile is not available
+      setAnalysisData([])
+      setSelectedDay(null)
+      setSelectedProblem(null)
+      setDbError(null)
+      setLoading(false)
+    }
+  }, [profile?.leetcode_username])
 
   const initializeSystem = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      if (!profile?.leetcode_username) return
       
-      setUser(user)
+      console.log('🔍 SmartAnalysis: Using LeetCode username:', profile.leetcode_username)
       
-      // Load existing analyzed problems immediately after setting user
+      // Try to load existing analyzed problems using leetcode_username
       const { data, error } = await supabase
         .from('problem_analysis')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('leetcode_username', profile.leetcode_username)
         .order('analyzed_at', { ascending: false })
 
       if (error) {
         console.error('Error loading analyzed problems:', error)
+        
+        // Check if it's a table structure issue
+        if (error.message.includes('leetcode_username does not exist') || 
+            error.message.includes('analyzed_at') || 
+            error.message.includes('does not exist')) {
+          setDbError(`Database table needs setup. Error: ${error.message}`)
+        } else {
+          setDbError(`Database error: ${error.message}`)
+        }
       } else {
-        console.log(`📚 Loaded ${data?.length || 0} existing analyzed problems`)
+        console.log(`📚 Loaded ${data?.length || 0} existing analyzed problems for ${profile.leetcode_username}`)
+        // Additional debug: check if data contains correct leetcode_username
+        if (data?.length) {
+          const profileProblems = data.filter(item => item.leetcode_username === profile.leetcode_username)
+          console.log(`🔍 Filtered to ${profileProblems.length} problems for current profile`)
+        }
         setAnalysisData(data || [])
+        setDbError(null)
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Initialization error:', error)
+      setDbError(`Initialization error: ${error?.message || 'Unknown error'}`)
     } finally {
       setLoading(false)
     }
   }
 
   const loadAnalyzedProblems = async () => {
-    if (!user) return
+    if (!profile?.leetcode_username) return
 
     try {
       const { data, error } = await supabase
         .from('problem_analysis')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('leetcode_username', profile.leetcode_username)
         .order('analyzed_at', { ascending: false })
 
-      if (error) throw error
+      if (error) {
+        console.error('Error loading analyzed problems:', error)
+        setDbError(`Error loading data: ${error.message}`)
+        return
+      }
 
       setAnalysisData(data || [])
-    } catch (error) {
+      setDbError(null)
+    } catch (error: any) {
       console.error('Error loading analyzed problems:', error)
+      setDbError(`Loading error: ${error?.message || 'Unknown error'}`)
     }
   }
 
   const compareAndAnalyze = async () => {
-    if (!user) return
+    if (!profile?.leetcode_username) return
 
     setAnalyzing(true)
 
@@ -140,14 +183,21 @@ export default function SmartAnalysisComponent({
       }
 
       // Step 3: Analyze unanalyzed submissions with LLM
+      console.log('🤖 Starting analysis of new problems...')
       const response = await fetch('/api/analyze-submissions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ submissions: unanalyzedSubmissions })
       })
 
-      if (!response.ok) throw new Error('Analysis failed')
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('❌ Analysis API failed:', errorText)
+        throw new Error(`Analysis failed: ${response.status} ${response.statusText}`)
+      }
+      
       const { results } = await response.json()
+      console.log('✅ LLM analysis completed successfully')
 
       // Step 4: Add to database
       for (let i = 0; i < results.length; i++) {
@@ -155,23 +205,31 @@ export default function SmartAnalysisComponent({
         const originalSubmission = unanalyzedSubmissions[i]
         
         const record = {
-          user_id: user.id,
-          problem_title: result.problem, // Fixed: use result.problem instead of result.problem_name
+          leetcode_username: profile.leetcode_username,
+          problem_title: result.problem,
           problem_slug: originalSubmission?.titleSlug || result.problem.toLowerCase().replace(/\s+/g, '-').replace(/[^\w-]/g, ''),
+          problem_url: `https://leetcode.com/problems/${originalSubmission?.titleSlug || result.problem.toLowerCase().replace(/\s+/g, '-').replace(/[^\w-]/g, '')}/`,
           difficulty: result.difficulty,
-          category: result.category,
-          concepts_analysis: {
+          analysis_result: {
             concepts: result.concepts || ['Problem Solving'],
             algorithm: result.category || 'General Algorithm',
             approach: result.description || 'Solve using appropriate algorithm and data structure.',
-            core_concept: result.concepts?.[0] || 'Problem Solving'
+            core_concept: result.concepts?.[0] || 'Problem Solving',
+            category: result.category,
+            estimated_next_recall_date: result.estimated_next_recall_date,
+            full_analysis: result
           },
-          revision_date: result.estimated_next_recall_date
+          analyzed_at: new Date().toISOString()
         }
 
-        await supabase.from('problem_analysis').upsert(record, {
-          onConflict: 'user_id,problem_slug'
+        const { error } = await supabase.from('problem_analysis').upsert(record, {
+          onConflict: 'leetcode_username,problem_slug'
         })
+        
+        if (error) {
+          console.error('❌ Error inserting analysis:', error)
+          setDbError(`Error saving analysis: ${error.message}`)
+        }
       }
 
       // Step 5: Reload and show updated list
@@ -187,7 +245,12 @@ export default function SmartAnalysisComponent({
 
   // Memoize calendar data generation
   const calendarData = useMemo(() => {
-    if (!analysisData.length) return []
+    if (!analysisData.length || !profile?.leetcode_username) return []
+    
+    // Additional filter to ensure we only show current profile's data
+    const profileAnalysisData = analysisData.filter(item => item.leetcode_username === profile.leetcode_username)
+    
+    if (!profileAnalysisData.length) return []
     
     // Get the start and end of the month we want to display
     const monthStart = startOfMonth(currentCalendarMonth)
@@ -198,9 +261,9 @@ export default function SmartAnalysisComponent({
     const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 0 })
     const allCalendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd })
     
-    // Group revision data by date string - only once
-    const groupedByDate = analysisData.reduce((acc, item) => {
-      const date = item.revision_date
+    // Group revision data by date string - only for current profile
+    const groupedByDate = profileAnalysisData.reduce((acc, item) => {
+      const date = item.analysis_result.estimated_next_recall_date || item.analyzed_at.split('T')[0]
       if (!acc[date]) acc[date] = []
       acc[date].push(item)
       return acc
@@ -222,7 +285,7 @@ export default function SmartAnalysisComponent({
       
       const problems = groupedByDate[dateString] || []
       const categories = Array.from(new Set(problems.map(p => {
-        return viewMode === 'difficulty' ? p.difficulty : (p.category || 'General')
+        return viewMode === 'difficulty' ? p.difficulty : (p.analysis_result.category || 'General')
       })))
       
       const difficultyCount = problems.reduce((acc, p) => {
@@ -237,7 +300,7 @@ export default function SmartAnalysisComponent({
     })
 
     return calendar
-  }, [analysisData, currentCalendarMonth, viewMode])
+  }, [analysisData, currentCalendarMonth, viewMode, profile?.leetcode_username])
 
   const generateCalendarData = (data: AnalysisData[], monthDate = currentCalendarMonth, useViewMode = viewMode) => {
     // This function is now mainly for external calls - internal state is handled by useMemo
@@ -324,10 +387,15 @@ export default function SmartAnalysisComponent({
 
   // Memoize unique categories for better performance
   const uniqueCategories = useMemo(() => {
+    if (!profile?.leetcode_username) return []
+    
+    // Filter by current profile and get categories
+    const profileAnalysisData = analysisData.filter(item => item.leetcode_username === profile.leetcode_username)
+    
     return Array.from(new Set(
-      analysisData.map(p => p.category).filter(Boolean)
-    )).slice(0, 8)
-  }, [analysisData])
+      profileAnalysisData.map(p => p.analysis_result.category).filter(Boolean)
+    ))
+  }, [analysisData, profile?.leetcode_username])
 
   const navigateMonth = (direction: 'prev' | 'next') => {
     const newMonth = new Date(currentCalendarMonth)
@@ -350,6 +418,47 @@ export default function SmartAnalysisComponent({
     )
   }
 
+  // Show database error if there's one
+  if (dbError) {
+    return (
+      <div className="space-y-6">
+        <Card className="shadow-lg border-red-200">
+          <CardHeader className="pb-6">
+            <div className="flex items-center gap-3 mb-3">
+              <Sparkles className="h-8 w-8 text-red-600" />
+              <h1 className="text-3xl font-bold text-red-600">
+                Database Setup Required
+              </h1>
+            </div>
+            
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <h3 className="font-semibold text-red-800 mb-2">Database Error:</h3>
+              <p className="text-red-700 mb-4">{dbError}</p>
+              
+              <div className="bg-white border border-red-200 rounded p-4">
+                <h4 className="font-semibold text-gray-800 mb-2">🛠️ Fix Instructions:</h4>
+                <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+                  <li>Go to your Supabase Dashboard</li>
+                  <li>Navigate to SQL Editor</li>
+                  <li>Run the SQL script from: <code>d:\reviser\sql\fix_problem_analysis_table.sql</code></li>
+                  <li>Refresh this page after running the script</li>
+                </ol>
+              </div>
+              
+              <button
+                onClick={() => window.location.reload()}
+                className="mt-4 inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors duration-200"
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Retry Connection
+              </button>
+            </div>
+          </CardHeader>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -359,45 +468,117 @@ export default function SmartAnalysisComponent({
             {/* Left Side - Title and Description */}
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-3">
-                <Sparkles className="h-8 w-8 text-blue-600" />
-                <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                <div className="relative">
+                  <Sparkles className="h-8 w-8 text-blue-600 animate-pulse" />
+                  <div className="absolute inset-0 h-8 w-8 bg-blue-600 rounded-full opacity-20 animate-ping"></div>
+                </div>
+                <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 bg-clip-text text-transparent animate-pulse">
                   Smart Analysis System
                 </h1>
+                <div className="flex space-x-1 ml-2">
+                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                  <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse animation-delay-200"></div>
+                  <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse animation-delay-400"></div>
+                </div>
               </div>
               
               <p className="text-lg text-gray-600 mb-4">
-                AI-powered DSA preparation insights with advanced analytics and performance tracking
+                🤖 AI-powered DSA preparation insights with advanced analytics and performance tracking
               </p>
               
               {/* Feature Indicators */}
               <div className="flex items-center flex-wrap gap-6">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <BarChart3 className="h-4 w-4" />
+                <div className="flex items-center gap-2 text-sm text-gray-500 hover:text-blue-600 transition-colors group">
+                  <BarChart3 className="h-4 w-4 group-hover:animate-pulse" />
                   <span>Analytics Dashboard</span>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <TrendingUp className="h-4 w-4" />
+                <div className="flex items-center gap-2 text-sm text-gray-500 hover:text-green-600 transition-colors group">
+                  <TrendingUp className="h-4 w-4 group-hover:animate-bounce" />
                   <span>Progress Tracking</span>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <Brain className="h-4 w-4" />
-                  <span>AI Insights</span>
+                <div className="flex items-center gap-2 text-sm text-gray-500 hover:text-purple-600 transition-colors group">
+                  <Brain className="h-4 w-4 group-hover:animate-pulse" />
+                  <span>🧠 AI Insights</span>
                 </div>
               </div>
             </div>
             
             {/* Right Side - Action Button */}
             <div className="flex-shrink-0 ml-8">
-              <Button 
-                color="primary" 
-                size="lg"
-                onPress={compareAndAnalyze}
-                isLoading={analyzing}
-                startContent={<RefreshCw className="h-4 w-4" />}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-700 hover:to-purple-700 shadow-lg px-8 py-3"
-              >
-                {analyzing ? 'Analyzing...' : 'Analyze New Problems'}
-              </Button>
+              <div className="relative group">
+                {/* Outer glow effect */}
+                <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-blue-400 via-purple-500 to-blue-600 opacity-60 blur-lg group-hover:opacity-90 transition-all duration-500 glow-pulse"></div>
+                
+                {/* Main button */}
+                <button
+                  onClick={compareAndAnalyze}
+                  disabled={analyzing}
+                  className={`relative inline-flex items-center px-6 py-3 bg-gradient-to-r from-blue-600 via-purple-600 to-blue-700 hover:from-blue-700 hover:via-purple-700 hover:to-blue-800 disabled:from-gray-500 disabled:via-gray-600 disabled:to-gray-700 text-white font-bold rounded-lg transition-all duration-300 transform hover:scale-105 active:scale-95 shadow-xl overflow-hidden ${
+                    !analyzing ? 'animate-pulse' : ''
+                  }`}
+                  style={{
+                    background: analyzing 
+                      ? 'linear-gradient(45deg, #3b82f6, #8b5cf6, #06b6d4, #3b82f6)' 
+                      : undefined,
+                    backgroundSize: analyzing ? '400% 400%' : undefined,
+                    animation: analyzing ? 'gradient-shift 3s ease infinite' : undefined
+                  }}
+                >
+                  {/* Floating sparkles */}
+                  {!analyzing && (
+                    <>
+                      <Sparkles className="absolute -top-1 -right-1 w-3 h-3 text-yellow-300 float-sparkle" />
+                      <Sparkles className="absolute top-1 left-2 w-2 h-2 text-blue-200 animate-ping animation-delay-500" />
+                      <Sparkles className="absolute -bottom-1 -left-1 w-2 h-2 text-purple-300 float-sparkle animation-delay-200" />
+                    </>
+                  )}
+                  
+                  {/* Animated icon with enhanced effects */}
+                  <div className="relative mr-3">
+                    {analyzing ? (
+                      <Brain className="w-5 h-5 animate-bounce text-white" />
+                    ) : (
+                      <>
+                        <Brain className="w-5 h-5 text-white animate-pulse" />
+                        <div className="absolute inset-0 w-5 h-5 bg-white rounded-full opacity-30 animate-ping"></div>
+                        <div className="absolute inset-0 w-5 h-5 bg-yellow-300 rounded-full opacity-20 animate-ping animation-delay-200"></div>
+                      </>
+                    )}
+                  </div>
+                  
+                  {/* Enhanced text with gradient effect */}
+                  <span className={`relative z-10 ${analyzing ? 'animate-pulse' : ''}`}>
+                    {analyzing ? (
+                      <span className="bg-gradient-to-r from-white via-blue-100 to-white bg-clip-text text-transparent">
+                        🤖 AI Analyzing...
+                      </span>
+                    ) : (
+                      'Analyze New Problems'
+                    )}
+                  </span>
+                  
+                  {/* Loading dots with enhanced animation */}
+                  {analyzing && (
+                    <div className="ml-2 flex space-x-1">
+                      <div className="w-2 h-2 bg-white rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-yellow-300 rounded-full animate-bounce animation-delay-200"></div>
+                      <div className="w-2 h-2 bg-blue-300 rounded-full animate-bounce animation-delay-400"></div>
+                    </div>
+                  )}
+                  
+                  {/* Enhanced shimmer effect */}
+                  <div className="absolute inset-0 rounded-lg bg-gradient-to-r from-transparent via-white to-transparent opacity-0 hover:opacity-30 transform -skew-x-12 transition-all duration-1000 hover:animate-pulse shimmer"></div>
+                  
+                  {/* Neural network pattern overlay */}
+                  {!analyzing && (
+                    <div className="absolute inset-0 opacity-10">
+                      <div className="absolute top-2 left-4 w-1 h-1 bg-white rounded-full animate-ping animation-delay-500"></div>
+                      <div className="absolute bottom-3 right-6 w-1 h-1 bg-white rounded-full animate-ping"></div>
+                      <div className="absolute top-1/2 left-1/2 w-1 h-1 bg-white rounded-full animate-ping animation-delay-200"></div>
+                    </div>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </CardHeader>
@@ -493,7 +674,7 @@ export default function SmartAnalysisComponent({
                                 )}
                               </>
                             ) : (
-                              day.categories.slice(0, 3).map((category, idx) => {
+                              day.categories.map((category, idx) => {
                                 const IconComponent = getCategoryIcon(category)
                                 
                                 return (
@@ -540,7 +721,7 @@ export default function SmartAnalysisComponent({
                 ) : (
                   // Show actual problem categories, not difficulty levels
                   uniqueCategories.map((category) => {
-                    const IconComponent = getCategoryIcon(category)
+                    const IconComponent = getCategoryIcon(category || 'General')
                     return (
                       <div key={category} className="flex items-center gap-2">
                         <IconComponent className="h-3 w-3 text-primary" />
@@ -579,7 +760,7 @@ export default function SmartAnalysisComponent({
                         {problem.difficulty}
                       </Chip>
                       <Chip size="sm" variant="flat">
-                        {problem.category}
+                        {problem.analysis_result.category}
                       </Chip>
                     </div>
                   </CardBody>
@@ -607,29 +788,29 @@ export default function SmartAnalysisComponent({
                     {selectedProblem.difficulty}
                   </Chip>
                   <Chip variant="flat">
-                    {selectedProblem.category}
+                    {selectedProblem.analysis_result.category}
                   </Chip>
                 </div>
 
                 <div>
                   <h4 className="font-semibold mb-2">Core Concept</h4>
-                  <p className="text-default-700">{selectedProblem.concepts_analysis.core_concept}</p>
+                  <p className="text-default-700">{selectedProblem.analysis_result.core_concept}</p>
                 </div>
 
                 <div>
                   <h4 className="font-semibold mb-2">Algorithm</h4>
-                  <p className="text-default-700">{selectedProblem.concepts_analysis.algorithm}</p>
+                  <p className="text-default-700">{selectedProblem.analysis_result.algorithm}</p>
                 </div>
 
                 <div>
                   <h4 className="font-semibold mb-2">Approach</h4>
-                  <p className="text-default-700">{selectedProblem.concepts_analysis.approach}</p>
+                  <p className="text-default-700">{selectedProblem.analysis_result.approach}</p>
                 </div>
 
                 <div>
                   <h4 className="font-semibold mb-2">Concepts</h4>
                   <div className="flex flex-wrap gap-2">
-                    {selectedProblem.concepts_analysis.concepts.map((concept, idx) => (
+                    {selectedProblem.analysis_result.concepts.map((concept: string, idx: number) => (
                       <Chip key={idx} size="sm" variant="flat" color="secondary">
                         {concept}
                       </Chip>
@@ -639,7 +820,7 @@ export default function SmartAnalysisComponent({
 
                 <div>
                   <h4 className="font-semibold mb-2">Revision Date</h4>
-                  <p className="text-default-700">{formatDate(selectedProblem.revision_date)}</p>
+                  <p className="text-default-700">{formatDate(selectedProblem.analysis_result.estimated_next_recall_date || selectedProblem.analyzed_at)}</p>
                 </div>
               </div>
             )}

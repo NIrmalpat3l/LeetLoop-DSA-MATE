@@ -53,8 +53,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(currentUser)
       
       if (currentUser) {
-        const { data } = await getProfile(currentUser.id)
-        setProfile(data)
+        let { data: profileData } = await getProfile(currentUser.id)
+        
+        // If no profile exists, create one automatically
+        if (!profileData) {
+          console.log('🔧 No profile found, creating one for user:', currentUser.id)
+          try {
+            const { data: newProfile, error: createError } = await supabase
+              .from('profiles')
+              .insert({
+                id: currentUser.id,
+                email: currentUser.email,
+                full_name: currentUser.user_metadata?.full_name || currentUser.email?.split('@')[0] || 'User',
+                leetcode_username: null,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              })
+              .select()
+              .single()
+            
+            if (createError) {
+              console.error('❌ Failed to create profile:', createError)
+            } else {
+              console.log('✅ Profile created successfully')
+              profileData = newProfile
+            }
+          } catch (error) {
+            console.error('❌ Error creating profile:', error)
+          }
+        }
+        
+        setProfile(profileData)
       }
       
       setLoading(false)

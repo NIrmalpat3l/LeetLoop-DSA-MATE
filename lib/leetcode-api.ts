@@ -109,6 +109,7 @@ export interface LeetCodeUserData {
   userProfile: LeetCodeUserProfile | null;
   userCalendar: LeetCodeUserCalendar | null;
   submissionStats: LeetCodeSubmissionStats | null;
+  submitStatsGlobal: LeetCodeSubmissionStats | null;
   tagStats: LeetCodeTagStats | null;
   languageStats: LeetCodeLanguageStats[];
   allQuestionsCount: LeetCodeAllQuestionsCount[];
@@ -134,6 +135,10 @@ export async function fetchLeetCodeUserData(username: string): Promise<LeetCodeU
   try {
     console.log('📡 Making API request to /api/leetcode...')
     
+    // Get the current session for authentication
+    const { supabase } = await import('./supabase')
+    const { data: { session } } = await supabase.auth.getSession()
+    
     // Add retry logic for network errors
     let lastError: Error | null = null
     const maxRetries = 3
@@ -145,11 +150,18 @@ export async function fetchLeetCodeUserData(username: string): Promise<LeetCodeU
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 30000) // 30 second timeout
         
+        const headers: HeadersInit = {
+          'Content-Type': 'application/json',
+        }
+        
+        // Add authorization header if we have a session
+        if (session?.access_token) {
+          headers['authorization'] = `Bearer ${session.access_token}`
+        }
+        
         const response = await fetch('/api/leetcode', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers,
           body: JSON.stringify({ username }),
           signal: controller.signal,
         })
@@ -330,6 +342,20 @@ export function getMockLeetCodeData(username: string): LeetCodeUserData {
       activeYears: [2023, 2024, 2025]
     },
     submissionStats: {
+      totalSubmissionNum: [
+        { difficulty: "All", count: 501, submissions: 501 },
+        { difficulty: "Easy", count: 195, submissions: 195 },
+        { difficulty: "Medium", count: 164, submissions: 164 },
+        { difficulty: "Hard", count: 92, submissions: 92 }
+      ],
+      acSubmissionNum: [
+        { difficulty: "All", count: 250, submissions: 250 },
+        { difficulty: "Easy", count: 150, submissions: 150 },
+        { difficulty: "Medium", count: 75, submissions: 75 },
+        { difficulty: "Hard", count: 25, submissions: 25 }
+      ]
+    },
+    submitStatsGlobal: {
       totalSubmissionNum: [
         { difficulty: "All", count: 501, submissions: 501 },
         { difficulty: "Easy", count: 195, submissions: 195 },
@@ -577,4 +603,48 @@ export class SpacedRepetition {
 // Utility function to generate LeetCode problem URLs
 export function generateLeetCodeProblemUrl(titleSlug: string): string {
   return `https://leetcode.com/problems/${titleSlug}/`
+}
+
+export async function fetchStoredLeetCodeData(profileId: string): Promise<LeetCodeUserData | null> {
+  try {
+    console.log('📖 Fetching stored LeetCode data for profile:', profileId)
+    
+    // Get the current session for authentication
+    const { supabase } = await import('./supabase')
+    const { data: { session } } = await supabase.auth.getSession()
+    
+    if (!session?.access_token) {
+      console.log('⚠️ No authentication session found')
+      return null
+    }
+    
+    const headers: HeadersInit = {
+      'authorization': `Bearer ${session.access_token}`
+    }
+    
+    const response = await fetch(`/api/leetcode?profile_id=${encodeURIComponent(profileId)}`, {
+      method: 'GET',
+      headers,
+    })
+    
+    if (!response.ok) {
+      if (response.status === 404) {
+        console.log('📭 No stored data found for profile:', profileId)
+        return null
+      }
+      throw new Error(`Failed to fetch stored data: ${response.status}`)
+    }
+    
+    const result = await response.json()
+    
+    if (result.success && result.data) {
+      console.log('✅ Successfully loaded stored data for profile:', profileId)
+      return result.data
+    }
+    
+    return null
+  } catch (error) {
+    console.error('❌ Error fetching stored data:', error)
+    return null
+  }
 }

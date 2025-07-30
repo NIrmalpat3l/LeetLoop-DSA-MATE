@@ -1,11 +1,12 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Card, CardBody, CardHeader, Button, Badge, Chip, Divider } from '@nextui-org/react'
-import { Calendar, Clock, Lightbulb, ArrowRight, Sparkles, LinkIcon, ChevronDown, ChevronUp, Target, RefreshCw } from 'lucide-react'
-import { fetchLeetCodeUserData, LeetCodeUserData, getMockLeetCodeData } from '@/lib/leetcode-api'
+import { Button } from '@nextui-org/react'
+import { RefreshCw } from 'lucide-react'
+import { LeetCodeUserData } from '@/lib/leetcode-api'
+import { SimpleLeetCodeService } from '@/lib/simple-leetcode-service'
+import { LeetCodeSyncService } from '@/lib/leetcode-sync-service'
 import { supabase } from '@/lib/supabase'
-import { useAuth } from '@/lib/auth-context'
 import Navigation from '@/components/Navigation'
 import SmartAnalysisComponent from '@/components/SmartAnalysisComponent'
 import LoadingPage from '@/components/LoadingPage'
@@ -13,64 +14,69 @@ import LoadingPage from '@/components/LoadingPage'
 // Force dynamic rendering
 export const dynamic = 'force-dynamic'
 
-function AnalysisPage() {
-  const { user, loading: authLoading } = useAuth()
+export default function AnalysisPage() {
   const [leetcodeData, setLeetcodeData] = useState<LeetCodeUserData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState('')
   const [profile, setProfile] = useState<any>(null)
-  const [dataLoaded, setDataLoaded] = useState(false)
 
   useEffect(() => {
-    // Only load once when auth state is resolved and we haven't loaded data yet
-    if (!authLoading && !dataLoaded) {
-      loadAnalysisData()
-    }
-  }, [authLoading, dataLoaded])
+    loadAnalysisData()
+  }, [])
 
-  const loadAnalysisData = async () => {
+  const loadAnalysisData = async (forceRefresh = false) => {
     try {
       setLoading(true)
       setError('')
       
-      // Check if user is authenticated
-      if (!user) {
-        setError('Please log in to view your analysis')
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      
+      if (authError || !user) {
+        setError('Please sign in to view your analysis')
+        setLoading(false)
         return
       }
 
-      const { data: profileData } = await supabase
+      // Get user profile
+      const { data: profileData, error: profileError } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', user.id)
         .single()
-      
-      setProfile(profileData)
 
-      // If LeetCode username is not set, don't try to fetch data
-      if (!profileData?.leetcode_username) {
-        setError('Please add your LeetCode username in your profile to see analysis data')
+      if (profileError) {
+        console.error('Error fetching profile:', profileError)
+        setError('Error loading profile')
+        setLoading(false)
         return
       }
 
-      // Fetch LeetCode data
+      if (!profileData?.leetcode_username) {
+        setError('Please set your LeetCode username in your profile')
+        setLoading(false)
+        return
+      }
+
+      setProfile(profileData)
+
+      console.log('🎯 Loading analysis data for username:', profileData.leetcode_username)
+
+      // Try to load stored data for this profile directly from database
       try {
-        console.log('🎯 Analysis: Attempting to fetch LeetCode data for:', profileData.leetcode_username)
-        const data = await fetchLeetCodeUserData(profileData.leetcode_username)
+        console.log('🔍 Analysis: Loading data from database for profile:', profileData.id)
         
-        if (!data) {
-          throw new Error('No data returned from API')
+        const storedData = await SimpleLeetCodeService.getProfileLeetCodeData(profileData.id)
+        if (storedData) {
+          console.log('✅ Analysis: Loaded stored data successfully for profile')
+          setLeetcodeData(storedData)
+        } else {
+          console.log('📭 Analysis: No stored data found for profile')
+          setError('No LeetCode data found for this profile. Please go to Dashboard and use the Sync button to fetch data.')
         }
-        
-        console.log('🎉 Analysis: Successfully received LeetCode data:', data)
-        console.log('📊 Analysis: Recent submissions count:', data?.recentSubmissions?.length || 0)
-        console.log('📝 Analysis: Recent submissions sample:', data?.recentSubmissions?.slice(0, 3))
-        
-        setLeetcodeData(data)
-        setDataLoaded(true) // Mark data as loaded
-      } catch (leetCodeError: any) {
-        console.error('❌ Analysis: LeetCode API error:', leetCodeError)
-        setError(`Failed to fetch LeetCode data: ${leetCodeError.message}. Please check your username and try again.`)
+      } catch (storageError) {
+        console.warn('⚠️ Analysis: Error loading stored data for profile:', storageError)
+        setError('Error loading data from database. Please try refreshing or sync data from Dashboard.')
       }
     } catch (error) {
       console.error('Error loading analysis:', error)
@@ -81,87 +87,88 @@ function AnalysisPage() {
   }
 
   const handleRefresh = async () => {
-    console.log('🔄 Manual refresh triggered')
-    setDataLoaded(false) // Reset data loaded flag
-    await loadAnalysisData()
+    console.log('🔄 Analysis: Manual refresh triggered')
+    await loadAnalysisData() // Reload data from database
   }
 
-  const handleRefreshAndAnalyze = async () => {
-    console.log('🔄 Comprehensive refresh and analysis triggered')
-    setDataLoaded(false) // Reset data loaded flag
-    await loadAnalysisData()
-  }
+  const syncLeetCodeData = async () => {
+    if (!profile?.leetcode_username || !profile?.id) {
+      setError('Please add your LeetCode username in your profile to sync data')
+      return
+    }
 
-  const handleSignOut = async () => {
     try {
-      await supabase.auth.signOut()
-      window.location.href = '/'
-    } catch (error) {
-      console.error('Error signing out:', error)
+      setSyncing(true)
+      setError('')
+      console.log('🔄 Analysis: Starting LeetCode data sync for username:', profile.leetcode_username, 'profile:', profile.id)
+
+      // Use the new sync service to fetch real data from LeetCode GraphQL API
+      const syncedData = await LeetCodeSyncService.syncUserData(profile.leetcode_username, profile.id)
+      
+      console.log('✅ Analysis: Successfully synced LeetCode data')
+      setLeetcodeData(syncedData)
+
+    } catch (error: any) {
+      console.error('❌ Analysis: Error syncing LeetCode data:', error)
+      setError(error.message || 'Failed to sync LeetCode data')
+    } finally {
+      setSyncing(false)
     }
   }
 
   const handleSignIn = () => {
-    window.location.href = '/'
+    window.location.href = '/auth'
   }
 
-  if (loading) {
-    return (
-      <LoadingPage 
-        title="Loading Analysis"
-        message="Please wait while we process your LeetCode data and generate AI-powered insights..."
-        size="lg"
-      />
-    )
-  }
-
-  if (error || !leetcodeData) {
-    const isAuthError = error === 'Please log in to view your analysis'
+  // Show error state
+  if (error) {
+    const isAuthError = error.includes('sign in') || error.includes('log in')
     
     return (
       <div className="min-h-screen bg-gray-50">
         <Navigation currentPage="analysis" />
-
+        
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="text-center py-12">
-            <div className="max-w-md mx-auto">
-              <Target className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                {isAuthError ? 'Please log in to view your analysis' : (error || 'Please Add Your LeetCode Username')}
-              </h3>
-              <p className="text-gray-600 mb-6">
-                {isAuthError 
-                  ? 'Sign in to your account to access your LeetCode analysis.'
-                  : (error ? 'There was an issue loading your data.' : 'Connect your LeetCode account to see your detailed analysis.')
-                }
-              </p>
-              {isAuthError ? (
-                <Button 
-                  color="primary" 
-                  onPress={handleSignIn}
-                  className="font-medium"
-                >
-                  Sign In
-                </Button>
-              ) : (
-                <div className="flex gap-3">
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <div className="text-center max-w-md">
+              <div className="mb-6">
+                <div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
+                  <RefreshCw className="w-8 h-8 text-red-600" />
+                </div>
+                <h2 className="text-xl font-semibold text-gray-900 mb-2">
+                  {isAuthError ? 'Authentication Required' : 'Unable to Load Analysis'}
+                </h2>
+                <p className="text-gray-600 mb-6">
+                  {error}
+                </p>
+                {isAuthError ? (
                   <Button 
                     color="primary" 
-                    onPress={() => window.location.href = '/profile'}
+                    onPress={handleSignIn}
                     className="font-medium"
                   >
-                    Go to Profile Settings
+                    Sign In
                   </Button>
-                  <Button 
-                    variant="bordered"
-                    onPress={handleRefresh}
-                    className="font-medium"
-                    isLoading={loading}
-                  >
-                    Try Again
-                  </Button>
-                </div>
-              )}
+                ) : (
+                  <div className="flex gap-3 justify-center">
+                    <Button 
+                      color="primary" 
+                      onPress={() => window.location.href = '/profile'}
+                      className="font-medium"
+                    >
+                      Go to Profile Settings
+                    </Button>
+                    <Button 
+                      variant="bordered"
+                      onPress={handleRefresh}
+                      className="font-medium"
+                      isLoading={loading}
+                    >
+                      Try Again
+                    </Button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -182,33 +189,91 @@ function AnalysisPage() {
           />
         ) : (
           <>
-            {/* Header with refresh button */}
+            {/* Header with sync button */}
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">Performance Analysis</h1>
-                <p className="text-gray-600">Insights based on your LeetCode activity</p>
+                <p className="text-gray-600">
+                  Insights based on your LeetCode activity
+                  {profile?.leetcode_username && (
+                    <span className="text-sm text-gray-500 block">
+                      Profile: {profile.leetcode_username}
+                    </span>
+                  )}
+                </p>
               </div>
-              <Button
-                variant="bordered"
-                onPress={handleRefreshAndAnalyze}
-                isLoading={loading}
-                startContent={!loading ? <RefreshCw className="w-4 h-4" /> : undefined}
-                className="text-gray-600 hover:text-gray-900"
-              >
-                Sync LeetCode Data
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="bordered"
+                  onPress={handleRefresh}
+                  isLoading={loading}
+                  startContent={!loading ? <RefreshCw className="w-4 h-4" /> : undefined}
+                  className="text-gray-600 hover:text-gray-900"
+                >
+                  Refresh
+                </Button>
+                {profile?.leetcode_username && (
+                  <Button
+                    variant="bordered"
+                    onPress={syncLeetCodeData}
+                    isLoading={syncing}
+                    startContent={!syncing ? <RefreshCw className="w-4 h-4" /> : undefined}
+                    className="text-gray-600 hover:text-gray-900"
+                  >
+                    {syncing ? 'Syncing...' : 'Sync Data'}
+                  </Button>
+                )}
+              </div>
             </div>
             
+            {/* Error State */}
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-6 mb-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-lg font-medium text-red-800">No Data Available</h3>
+                    <p className="text-red-600 mt-1">{error}</p>
+                  </div>
+                  <div className="flex gap-2 ml-4">
+                    {profile?.leetcode_username ? (
+                      <Button
+                        variant="bordered"
+                        onPress={syncLeetCodeData}
+                        isLoading={syncing}
+                        startContent={!syncing ? <RefreshCw className="w-4 h-4" /> : undefined}
+                        className="text-gray-600 hover:text-gray-900"
+                      >
+                        {syncing ? 'Syncing...' : 'Sync Data'}
+                      </Button>
+                    ) : (
+                      <Button
+                        color="primary"
+                        onPress={() => window.location.href = '/profile'}
+                      >
+                        Set LeetCode Username
+                      </Button>
+                    )}
+                    <Button
+                      variant="bordered"
+                      onPress={() => window.location.href = '/dashboard'}
+                    >
+                      Go to Dashboard
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
             {/* Smart Analysis Component */}
-            <SmartAnalysisComponent 
-              recentSubmissions={leetcodeData?.recentSubmissions || []} 
-              onRefreshRequest={handleRefreshAndAnalyze}
-            />
+            {leetcodeData && !error && (
+              <SmartAnalysisComponent 
+                recentSubmissions={leetcodeData?.recentSubmissions || []} 
+                onRefreshRequest={handleRefresh}
+              />
+            )}
           </>
         )}
       </div>
     </div>
   )
 }
-
-export default AnalysisPage

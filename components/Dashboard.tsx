@@ -3,123 +3,72 @@
 import { useState, useEffect } from 'react'
 import { Card, CardBody, CardHeader, Button, Progress, Badge, Divider, Chip, User as UserIcon } from '@nextui-org/react'
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, LineChart, Line, ResponsiveContainer, LabelList } from 'recharts'
-import { Bell, Calendar, TrendingUp, Target, Brain, AlertTriangle, CheckCircle, Clock, LinkIcon, User, LogOut, Code, Trophy, Flame, ArrowRight } from 'lucide-react'
-import { fetchLeetCodeUserData, LeetCodeUserData, generateLeetCodeProblemUrl } from '@/lib/leetcode-api'
+import { Bell, Calendar, TrendingUp, Target, Brain, AlertTriangle, CheckCircle, Clock, LinkIcon, User, LogOut, Code, Trophy, Flame, ArrowRight, RefreshCw } from 'lucide-react'
+import { LeetCodeUserData, generateLeetCodeProblemUrl } from '@/lib/leetcode-api'
+import { SimpleLeetCodeService } from '@/lib/simple-leetcode-service'
+import { LeetCodeSyncService } from '@/lib/leetcode-sync-service'
 import { supabase } from '@/lib/supabase'
 import { useAuth } from '@/lib/auth-context'
 import LoadingPage from '@/components/LoadingPage'
 import Navigation from '@/components/Navigation'
 
 function Dashboard() {
-  const { user, loading: authLoading } = useAuth()
+  const { user, profile: authProfile, loading: authLoading } = useAuth()
   const [leetcodeData, setLeetcodeData] = useState<LeetCodeUserData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [syncing, setSyncing] = useState(false)
   const [error, setError] = useState('')
-  const [profile, setProfile] = useState<any>(null)
+  const [successMessage, setSuccessMessage] = useState('')
 
   useEffect(() => {
-    // Only load dashboard data when auth state is resolved
-    if (!authLoading) {
+    // Only load dashboard data when auth state is resolved and we have a profile
+    if (!authLoading && user && authProfile) {
       loadDashboardData()
+    } else if (!authLoading) {
+      setLoading(false)
     }
-  }, [user, authLoading])
+  }, [user, authProfile, authLoading])
 
   const loadDashboardData = async () => {
     try {
       setLoading(true)
       setError('')
       
-      // Wait a bit for auth state to settle after OAuth redirect
-      await new Promise(resolve => setTimeout(resolve, 500))
-      
-      // Check if user is authenticated
-      if (!user) {
-        setError('Please log in to view your dashboard')
-        return
-      }
-
-      // Add retry logic for database queries
-      let profileData = null
-      let retryCount = 0
-      const maxRetries = 3
-      
-      while (retryCount < maxRetries && !profileData) {
-        try {
-          const { data, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', user.id)
-            .single()
-          
-          if (error) {
-            console.error(`Profile fetch attempt ${retryCount + 1} failed:`, error)
-            if (retryCount === maxRetries - 1) throw error
-          } else {
-            profileData = data
-          }
-        } catch (dbError) {
-          console.error(`Database error on attempt ${retryCount + 1}:`, dbError)
-          if (retryCount === maxRetries - 1) {
-            throw new Error('Failed to load profile after multiple attempts')
-          }
-        }
-        
-        retryCount++
-        if (!profileData && retryCount < maxRetries) {
-          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount))
-        }
-      }
-      
-      setProfile(profileData)
+      console.log('🔍 Dashboard: Loading data for profile:', authProfile?.id, 'leetcode_username:', authProfile?.leetcode_username)
 
       // If LeetCode username is not set, don't try to fetch data
-      if (!profileData?.leetcode_username) {
-        setError('Please add your LeetCode username in your profile to see dashboard data')
-        return
+      if (!authProfile?.leetcode_username) {
+        console.log('📝 Dashboard: No LeetCode username set in profile')
+        return // Don't set error here, let the UI handle it
       }
 
-      // Fetch LeetCode data - with detailed error logging and retry
+      // Fetch LeetCode data from database
       try {
-        console.log('🎯 Dashboard: Attempting to fetch LeetCode data for:', profileData.leetcode_username)
+        console.log('🔍 Dashboard: Loading LeetCode data from database for profile:', authProfile.id)
         
-        // Add timeout to prevent hanging requests
-        const timeoutPromise = new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('Request timeout')), 30000)
-        )
+        const data = await SimpleLeetCodeService.getProfileLeetCodeData(authProfile.id)
         
-        const dataPromise = fetchLeetCodeUserData(profileData.leetcode_username)
-        const data = await Promise.race([dataPromise, timeoutPromise])
-        
-        // Verify the data structure
-        if (!data) {
-          throw new Error('No data returned from API')
+        // Check if we got stored data
+        if (data) {
+          console.log('✅ Dashboard: Loaded stored LeetCode data for profile')
+          console.log('📊 Dashboard: Data structure inspection:', {
+            hasUserProfile: !!data.userProfile,
+            hasSubmissionStats: !!data.submissionStats,
+            userProfileKeys: data.userProfile ? Object.keys(data.userProfile) : [],
+            submissionStatsKeys: data.submissionStats ? Object.keys(data.submissionStats) : [],
+            numAcceptedQuestions: data.userProfile?.numAcceptedQuestions,
+            acSubmissionNum: data.submissionStats?.acSubmissionNum,
+            fullUserProfile: data.userProfile,
+            fullSubmissionStats: data.submissionStats
+          })
+          setLeetcodeData(data)
+        } else {
+          console.log('� Dashboard: No stored data found for profile')
+          setError('No LeetCode data found for this profile. Use the sync button to fetch data from LeetCode.')
         }
-        
-        console.log('🎉 Dashboard: Successfully received LeetCode data:', data)
-        console.log('📊 Dashboard: Recent submissions count:', (data as any)?.recentSubmissions?.length || 0)
-        console.log('📊 Dashboard: Data source:', (data as any)?.source || 'unknown')
-        console.log('📊 Dashboard: First submission:', (data as any)?.recentSubmissions?.[0] || 'none')
-        
-        setLeetcodeData(data)
-      } catch (leetCodeError: any) {
-        console.error('❌ Dashboard: LeetCode API error:', leetCodeError)
-        console.error('❌ Dashboard: Error details:', {
-          message: leetCodeError?.message || 'Unknown error',
-          stack: leetCodeError?.stack || 'No stack trace',
-          name: leetCodeError?.name || 'Unknown error type'
-        })
-        
-        // Provide more specific error messages
-        let errorMessage = 'Failed to load LeetCode data'
-        if (leetCodeError?.message?.includes('timeout')) {
-          errorMessage = 'Request timed out. Please check your internet connection and try again.'
-        } else if (leetCodeError?.message?.includes('fetch')) {
-          errorMessage = 'Network error occurred. Please check your connection and try again.'
-        } else if (leetCodeError?.message) {
-          errorMessage = `LeetCode API error: ${leetCodeError.message}`
-        }
-        
-        setError(errorMessage)
+      } catch (storageError: any) {
+        console.error('❌ Dashboard: Error loading stored data:', storageError)
+        setError('Error loading data from database. Please try refreshing the page.')
       }
     } catch (error: any) {
       console.error('Error loading dashboard:', error)
@@ -140,6 +89,40 @@ function Dashboard() {
 
   const handleSignIn = () => {
     window.location.href = '/'
+  }
+
+  const syncLeetCodeData = async () => {
+    console.log('🔍 Dashboard: syncLeetCodeData called with authProfile:', authProfile)
+    console.log('🔍 Dashboard: authProfile?.leetcode_username:', authProfile?.leetcode_username)
+    console.log('🔍 Dashboard: authProfile?.id:', authProfile?.id)
+    
+    if (!authProfile?.leetcode_username || !authProfile?.id) {
+      setError('Please add your LeetCode username in your profile to sync data')
+      return
+    }
+
+    try {
+      setSyncing(true)
+      setError('')
+      setSuccessMessage('')
+      console.log('🔄 Dashboard: Starting LeetCode data sync for username:', authProfile.leetcode_username, 'profile:', authProfile.id)
+
+      // Use the new sync service to fetch real data from LeetCode GraphQL API
+      const syncedData = await LeetCodeSyncService.syncUserData(authProfile.leetcode_username, authProfile.id)
+      
+      console.log('✅ Dashboard: Successfully synced LeetCode data')
+      setLeetcodeData(syncedData)
+      setSuccessMessage('LeetCode data synced successfully!')
+
+      // Clear success message after 3 seconds
+      setTimeout(() => setSuccessMessage(''), 3000)
+
+    } catch (error: any) {
+      console.error('❌ Dashboard: Error syncing LeetCode data:', error)
+      setError(error.message || 'Failed to sync LeetCode data')
+    } finally {
+      setSyncing(false)
+    }
   }
 
   const formatTimestamp = (timestamp: string) => {
@@ -339,6 +322,7 @@ function Dashboard() {
     )
   }
 
+  // Show loading state
   if (authLoading || loading) {
     return (
       <LoadingPage 
@@ -349,80 +333,30 @@ function Dashboard() {
     )
   }
 
-  if (error || !leetcodeData) {
-    const isAuthError = error === 'Please log in to view your dashboard'
-    
+  // Show sign in if not authenticated
+  if (!user) {
     return (
       <div className="min-h-screen bg-gray-50">
-        {/* Simple Navigation */}
         <div className="bg-white shadow-sm border-b">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <div className="flex items-center space-x-2">
-                  <Brain className="w-8 h-8 text-blue-600" />
-                  <span className="text-xl font-bold text-gray-900">LeetLoop</span>
-                </div>
-                <div className="hidden md:flex items-center space-x-6 ml-8">
-                  <a href="/dashboard" className="text-blue-600 font-medium">Dashboard</a>
-                  <a href="/analysis" className="text-gray-600 hover:text-gray-900">Analysis</a>
-                  <a href="/profile" className="text-gray-600 hover:text-gray-900">Profile</a>
-                </div>
+              <div className="flex items-center space-x-2">
+                <Brain className="w-8 h-8 text-blue-600" />
+                <span className="text-xl font-bold text-gray-900">LeetLoop</span>
               </div>
-              {isAuthError ? (
-                <Button 
-                  color="primary"
-                  onPress={handleSignIn}
-                  startContent={<User className="w-4 h-4" />}
-                  size="sm"
-                >
-                  Sign In
-                </Button>
-              ) : (
-                <Button 
-                  variant="ghost" 
-                  onPress={handleSignOut}
-                  startContent={<LogOut className="w-4 h-4" />}
-                  size="sm"
-                >
-                  Sign Out
-                </Button>
-              )}
+              <Navigation />
             </div>
           </div>
         </div>
-
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center py-12">
             <div className="max-w-md mx-auto">
-              <LinkIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                {isAuthError ? 'Please log in to view your dashboard' : (error || 'Please Add Your LeetCode Username')}
-              </h3>
-              <p className="text-gray-600 mb-6">
-                {isAuthError 
-                  ? 'Sign in to your account to access your LeetCode dashboard and analytics.'
-                  : (error ? 'There was an issue loading your data.' : 'Connect your LeetCode account to see your progress and analytics.')
-                }
-              </p>
-              {isAuthError ? (
-                <Button 
-                  color="primary" 
-                  onPress={handleSignIn}
-                  className="font-medium"
-                  startContent={<User className="w-4 h-4" />}
-                >
-                  Sign In
-                </Button>
-              ) : (
-                <Button 
-                  color="primary" 
-                  onPress={() => window.location.href = '/profile'}
-                  className="font-medium"
-                >
-                  Go to Profile Settings
-                </Button>
-              )}
+              <User className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">Please log in to view your dashboard</h3>
+              <p className="text-gray-600 mb-6">Sign in to your account to access your LeetCode dashboard and analytics.</p>
+              <Button color="primary" onPress={handleSignIn} className="font-medium" startContent={<User className="w-4 h-4" />}>
+                Sign In
+              </Button>
             </div>
           </div>
         </div>
@@ -430,11 +364,186 @@ function Dashboard() {
     )
   }
 
-  // Calculate stats from LeetCode data
-  const totalSolved = leetcodeData.userProfile?.numAcceptedQuestions?.reduce((sum: number, item: any) => sum + item.count, 0) || 0
-  const easyStats = leetcodeData.userProfile?.numAcceptedQuestions?.find((item: any) => item.difficulty === 'EASY') || { count: 0 }
-  const mediumStats = leetcodeData.userProfile?.numAcceptedQuestions?.find((item: any) => item.difficulty === 'MEDIUM') || { count: 0 }
-  const hardStats = leetcodeData.userProfile?.numAcceptedQuestions?.find((item: any) => item.difficulty === 'HARD') || { count: 0 }
+  // Show profile setup if no LeetCode username
+  if (!authProfile?.leetcode_username) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="bg-white shadow-sm border-b">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Brain className="w-8 h-8 text-blue-600" />
+                <span className="text-xl font-bold text-gray-900">LeetLoop</span>
+              </div>
+              <div className="flex items-center space-x-4">
+                <Navigation />
+                <Button variant="ghost" onPress={handleSignOut} startContent={<LogOut className="w-4 h-4" />} size="sm">
+                  Sign Out
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="text-center py-12">
+            <div className="max-w-md mx-auto">
+              <LinkIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">Add Your LeetCode Username</h3>
+              <p className="text-gray-600 mb-6">Connect your LeetCode account to see your progress and analytics.</p>
+              <Button color="primary" onPress={() => window.location.href = '/profile'} className="font-medium" startContent={<User className="w-4 h-4" />}>
+                Go to Profile Settings
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Show sync button if no LeetCode data
+  if (!leetcodeData) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        <div className="bg-white shadow-sm border-b">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Brain className="w-8 h-8 text-blue-600" />
+                <span className="text-xl font-bold text-gray-900">LeetLoop</span>
+              </div>
+              <div className="flex items-center space-x-4">
+                <Navigation />
+                <Button variant="ghost" onPress={handleSignOut} startContent={<LogOut className="w-4 h-4" />} size="sm">
+                  Sign Out
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="text-center py-12">
+            <div className="max-w-md mx-auto">
+              <RefreshCw className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">Sync Your LeetCode Data</h3>
+              <p className="text-gray-600 mb-6">
+                No data found for <strong>{authProfile.leetcode_username}</strong>. Click below to fetch your latest LeetCode progress and statistics.
+              </p>
+              {successMessage && (
+                <div className="mb-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded">
+                  {successMessage}
+                </div>
+              )}
+              {error && (
+                <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                  {error}
+                </div>
+              )}
+              <div className="space-y-3">
+                <Button
+                  color="primary"
+                  variant="solid"
+                  onPress={syncLeetCodeData}
+                  startContent={<RefreshCw className={`w-5 h-5 ${syncing ? 'animate-spin' : ''}`} />}
+                  isLoading={syncing}
+                  isDisabled={syncing}
+                  size="lg"
+                  className="font-semibold"
+                >
+                  {syncing ? 'Syncing Data...' : 'Sync LeetCode Data'}
+                </Button>
+                <br />
+                <Button 
+                  color="default" 
+                  variant="bordered"
+                  onPress={() => window.location.href = '/profile'}
+                  className="font-medium"
+                  size="sm"
+                >
+                  Update Profile Settings
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Calculate stats from LeetCode data - Fixed to use correct data structure
+  const calculateProblemStats = () => {
+    // First try to get data from submitStatsGlobal.acSubmissionNum (most accurate for accepted problems)
+    if (leetcodeData?.submitStatsGlobal?.acSubmissionNum?.length) {
+      const acSubmissions = leetcodeData.submitStatsGlobal.acSubmissionNum
+      const totalSolved = acSubmissions.find((item: any) => item.difficulty === 'All')?.count || 0
+      const easyStats = acSubmissions.find((item: any) => item.difficulty === 'Easy') || { count: 0 }
+      const mediumStats = acSubmissions.find((item: any) => item.difficulty === 'Medium') || { count: 0 }
+      const hardStats = acSubmissions.find((item: any) => item.difficulty === 'Hard') || { count: 0 }
+      
+      console.log('📊 Using submitStatsGlobal data:', { totalSolved, easy: easyStats.count, medium: mediumStats.count, hard: hardStats.count })
+      return { totalSolved, easyStats, mediumStats, hardStats }
+    }
+    
+    // Second fallback: try submissionStats if it exists
+    if (leetcodeData?.submissionStats?.acSubmissionNum?.length) {
+      const acSubmissions = leetcodeData.submissionStats.acSubmissionNum
+      const totalSolved = acSubmissions.find((item: any) => item.difficulty === 'All')?.count || 0
+      const easyStats = acSubmissions.find((item: any) => item.difficulty === 'Easy') || { count: 0 }
+      const mediumStats = acSubmissions.find((item: any) => item.difficulty === 'Medium') || { count: 0 }
+      const hardStats = acSubmissions.find((item: any) => item.difficulty === 'Hard') || { count: 0 }
+      
+      console.log('📊 Using submissionStats data:', { totalSolved, easy: easyStats.count, medium: mediumStats.count, hard: hardStats.count })
+      return { totalSolved, easyStats, mediumStats, hardStats }
+    }
+    
+    // Third fallback to userProfile.numAcceptedQuestions if available
+    if (leetcodeData?.userProfile?.numAcceptedQuestions?.length) {
+      const numAccepted = leetcodeData.userProfile.numAcceptedQuestions
+      const totalSolved = numAccepted.reduce((sum: number, item: any) => sum + item.count, 0) || 0
+      const easyStats = numAccepted.find((item: any) => item.difficulty === 'EASY') || { count: 0 }
+      const mediumStats = numAccepted.find((item: any) => item.difficulty === 'MEDIUM') || { count: 0 }
+      const hardStats = numAccepted.find((item: any) => item.difficulty === 'HARD') || { count: 0 }
+      
+      console.log('📊 Using userProfile data:', { totalSolved, easy: easyStats.count, medium: mediumStats.count, hard: hardStats.count })
+      return { totalSolved, easyStats, mediumStats, hardStats }
+    }
+    
+    // Fourth fallback: calculate from recent submissions
+    if (leetcodeData?.recentSubmissions?.length) {
+      const uniqueProblems = new Set()
+      let easy = 0, medium = 0, hard = 0
+      
+      leetcodeData.recentSubmissions.forEach(submission => {
+        const key = submission.titleSlug || submission.title
+        if (!uniqueProblems.has(key)) {
+          uniqueProblems.add(key)
+          const difficulty = submission.difficulty?.toLowerCase()
+          if (difficulty === 'easy') easy++
+          else if (difficulty === 'medium') medium++
+          else if (difficulty === 'hard') hard++
+        }
+      })
+      
+      const totalSolved = easy + medium + hard
+      console.log('📊 Calculated from recent submissions:', { totalSolved, easy, medium, hard })
+      return {
+        totalSolved,
+        easyStats: { count: easy },
+        mediumStats: { count: medium },
+        hardStats: { count: hard }
+      }
+    }
+    
+    // Final fallback - zero values
+    console.log('📊 No valid data found, using zero values')
+    return {
+      totalSolved: 0,
+      easyStats: { count: 0 },
+      mediumStats: { count: 0 },
+      hardStats: { count: 0 }
+    }
+  }
+
+  const { totalSolved, easyStats, mediumStats, hardStats } = calculateProblemStats()
 
   // Prepare chart data
   const difficultyData = [
@@ -448,6 +557,65 @@ function Dashboard() {
       <Navigation currentPage="dashboard" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        {/* Header with Sync Button */}
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+            <p className="text-gray-600 mt-1">
+              Your LeetCode performance overview
+              {authProfile?.leetcode_username && (
+                <span className="text-sm text-gray-500 block">
+                  Profile: {authProfile.leetcode_username}
+                </span>
+              )}
+            </p>
+          </div>
+          {authProfile?.leetcode_username && (
+            <div className="flex gap-3">
+              <Button
+                color="default"
+                variant="bordered"
+                onPress={() => loadDashboardData()}
+                startContent={<RefreshCw className="w-4 h-4" />}
+                isLoading={loading}
+                isDisabled={loading || syncing}
+              >
+                Refresh
+              </Button>
+              <Button
+                color="default"
+                variant="bordered"
+                onPress={syncLeetCodeData}
+                startContent={<RefreshCw className="w-4 h-4" />}
+                isLoading={syncing}
+                isDisabled={loading || syncing}
+              >
+                {syncing ? 'Syncing...' : 'Sync Data'}
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* Success/Error Messages */}
+        {successMessage && (
+          <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <div className="flex items-center">
+              <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
+              <span className="text-green-800">{successMessage}</span>
+            </div>
+          </div>
+        )}
+        
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <div className="flex items-center">
+              <AlertTriangle className="w-5 h-5 text-red-600 mr-2" />
+              <span className="text-red-800">{error}</span>
+            </div>
+          </div>
+        )}
+
         {/* Stats Overview */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <Card>
@@ -557,37 +725,6 @@ function Dashboard() {
         {/* Topic Analysis */}
         <div className="mb-8">
           {renderTopicAnalysis()}
-        </div>
-
-        {/* Analysis Link Card */}
-        <div className="mb-8">
-          <Card>
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                    <Brain className="w-6 h-6 text-blue-600" />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-semibold text-gray-900">AI-Powered Analysis</h3>
-                    <p className="text-gray-600">Get detailed concept analysis and spaced repetition recommendations</p>
-                    <p className="text-sm text-blue-600 mt-1">
-                      Analyze all {leetcodeData?.recentSubmissions?.length || 0} recent submissions with consistent recall dates
-                    </p>
-                  </div>
-                </div>
-                <Button 
-                  color="primary"
-                  variant="solid"
-                  onPress={() => window.location.href = '/analysis'}
-                  className="font-medium"
-                  startContent={<ArrowRight className="w-4 h-4" />}
-                >
-                  View Analysis
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
         </div>
 
         {/* Recent Submissions */}

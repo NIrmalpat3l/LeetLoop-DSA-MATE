@@ -17,6 +17,30 @@ const groq = new Groq({
   dangerouslyAllowBrowser: true // Enable client-side usage
 });
 
+// Check API key validity
+export async function validateApiKey(): Promise<{ valid: boolean; error?: string }> {
+  try {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+      return { valid: false, error: 'No API key found in environment variables' };
+    }
+    
+    // Test with a simple API call
+    const completion = await groq.chat.completions.create({
+      messages: [{ role: 'user', content: 'Test' }],
+      model: 'llama-3.1-8b-instant',
+      max_tokens: 10,
+    });
+    
+    return { valid: true };
+  } catch (error: any) {
+    if (error?.status === 401) {
+      return { valid: false, error: 'API key is invalid or expired' };
+    }
+    return { valid: false, error: `API connection failed: ${error?.message || 'Unknown error'}` };
+  }
+}
+
 export interface ConceptAnalysis {
   problem: string;
   concepts: string[];
@@ -155,7 +179,7 @@ export async function analyzeConceptsAndRecall(submissions: SubmissionForAnalysi
       .filter((sub, index, self) => 
         index === self.findIndex(s => s.problem_name === sub.problem_name)
       )
-      .slice(0, 15); // Increased limit to handle all 15+ submissions
+      .slice(0, 25); // Increased limit to handle all 25 submissions
 
     const enhancedPrompt = `
 You are a DSA learning assistant. Analyze these LeetCode submissions for spaced repetition.
@@ -283,8 +307,16 @@ Return JSON array (NO markdown):
       }
     }
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error in batch analysis:', error);
+    
+    // Better error handling - check if it's an authentication issue
+    if (error?.status === 401 || error?.message?.includes('Invalid API Key')) {
+      console.error('🔑 API Key Authentication Failed - Using Enhanced Fallback Analysis');
+    } else {
+      console.error('🔧 API Connection Failed - Using Enhanced Fallback Analysis');
+    }
+    
     // Fallback to individual analysis
     console.log('Falling back to individual analysis...');
     try {
@@ -296,20 +328,114 @@ Return JSON array (NO markdown):
       return results;
     } catch (fallbackError) {
       console.error('Fallback also failed:', fallbackError);
-      // Last resort: return simple analysis for all submissions
-      const results: ConceptAnalysis[] = submissions.slice(0, 15).map((sub, index) => ({
-        problem: sub.problem_name,
-        concepts: ['Problem Solving', 'Algorithms'],
-        description: `Analysis for ${sub.problem_name} - please try again for detailed insights.`,
-        estimated_next_recall_date: format(new Date(Date.now() + (7 + index) * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'),
-        reasoning: `Default analysis due to API parsing error. Estimated ${sub.difficulty || 'Medium'} difficulty.`,
-        difficulty: sub.difficulty || 'Medium',
-        category: 'General'
-      }));
-      console.log('Returning emergency fallback analysis for', results.length, 'problems');
+      // Enhanced fallback: provide meaningful analysis based on problem names
+      const results: ConceptAnalysis[] = submissions.slice(0, 25).map((sub, index) => {
+        const analysis = getEnhancedFallbackAnalysis(sub);
+        return {
+          problem: sub.problem_name,
+          concepts: analysis.concepts,
+          description: analysis.description,
+          estimated_next_recall_date: format(new Date(Date.now() + (7 + index) * 24 * 60 * 60 * 1000), 'yyyy-MM-dd'),
+          reasoning: analysis.reasoning,
+          difficulty: sub.difficulty || 'Medium',
+          category: analysis.category
+        };
+      });
+      console.log('Returning enhanced fallback analysis for', results.length, 'problems');
       return results;
     }
   }
+}
+
+// Enhanced fallback analysis based on problem name patterns
+function getEnhancedFallbackAnalysis(submission: SubmissionForAnalysis): {
+  concepts: string[]
+  description: string
+  reasoning: string
+  category: string
+} {
+  const problemName = submission.problem_name.toLowerCase();
+  
+  // Pattern matching for better categorization
+  if (problemName.includes('tree') || problemName.includes('binary tree') || problemName.includes('bst')) {
+    return {
+      concepts: ['Binary Tree', 'Tree Traversal', 'Recursion'],
+      description: `Binary tree problem focusing on tree structure manipulation and traversal techniques. Key concepts include understanding tree properties and recursive thinking.`,
+      reasoning: `Pattern-based analysis: Tree-related keywords detected. ${submission.difficulty} difficulty suggests ${submission.difficulty === 'Easy' ? 'basic tree operations' : 'advanced tree algorithms'}.`,
+      category: 'Tree'
+    };
+  }
+  
+  if (problemName.includes('array') || problemName.includes('subarray') || problemName.includes('matrix')) {
+    return {
+      concepts: ['Array Manipulation', 'Two Pointers', 'Sliding Window'],
+      description: `Array-based problem requiring efficient manipulation and traversal strategies. Focus on optimizing time and space complexity.`,
+      reasoning: `Pattern-based analysis: Array/Matrix keywords detected. ${submission.difficulty} difficulty suggests ${submission.difficulty === 'Easy' ? 'basic array operations' : 'advanced array algorithms'}.`,
+      category: 'Array'
+    };
+  }
+  
+  if (problemName.includes('string') || problemName.includes('substring') || problemName.includes('palindrome')) {
+    return {
+      concepts: ['String Processing', 'Pattern Matching', 'Dynamic Programming'],
+      description: `String manipulation problem focusing on character analysis and pattern recognition. Important for developing text processing skills.`,
+      reasoning: `Pattern-based analysis: String-related keywords detected. ${submission.difficulty} difficulty suggests ${submission.difficulty === 'Easy' ? 'basic string operations' : 'complex string algorithms'}.`,
+      category: 'String'
+    };
+  }
+  
+  if (problemName.includes('graph') || problemName.includes('dfs') || problemName.includes('bfs') || problemName.includes('node')) {
+    return {
+      concepts: ['Graph Theory', 'DFS', 'BFS', 'Graph Traversal'],
+      description: `Graph-based problem requiring understanding of graph structures and traversal algorithms. Essential for network and connectivity problems.`,
+      reasoning: `Pattern-based analysis: Graph-related keywords detected. ${submission.difficulty} difficulty suggests ${submission.difficulty === 'Easy' ? 'basic graph traversal' : 'complex graph algorithms'}.`,
+      category: 'Graph'
+    };
+  }
+  
+  if (problemName.includes('dynamic') || problemName.includes('dp') || problemName.includes('optimization')) {
+    return {
+      concepts: ['Dynamic Programming', 'Optimization', 'Memoization'],
+      description: `Dynamic programming problem focusing on optimal substructure and overlapping subproblems. Key to solving complex optimization challenges.`,
+      reasoning: `Pattern-based analysis: DP-related keywords detected. ${submission.difficulty} difficulty suggests ${submission.difficulty === 'Easy' ? 'basic DP concepts' : 'advanced DP patterns'}.`,
+      category: 'Dynamic Programming'
+    };
+  }
+  
+  if (problemName.includes('sort') || problemName.includes('merge') || problemName.includes('quick')) {
+    return {
+      concepts: ['Sorting Algorithms', 'Merge Sort', 'Quick Sort', 'Divide and Conquer'],
+      description: `Sorting-based problem focusing on efficient ordering algorithms and divide-and-conquer strategies.`,
+      reasoning: `Pattern-based analysis: Sorting keywords detected. ${submission.difficulty} difficulty suggests ${submission.difficulty === 'Easy' ? 'basic sorting concepts' : 'advanced sorting techniques'}.`,
+      category: 'Sorting'
+    };
+  }
+  
+  if (problemName.includes('hash') || problemName.includes('map') || problemName.includes('frequency')) {
+    return {
+      concepts: ['Hash Tables', 'HashMap', 'Frequency Counting'],
+      description: `Hash-based problem focusing on efficient lookup and frequency analysis. Important for optimization and counting problems.`,
+      reasoning: `Pattern-based analysis: Hash/Map keywords detected. ${submission.difficulty} difficulty suggests ${submission.difficulty === 'Easy' ? 'basic hashing' : 'advanced hash techniques'}.`,
+      category: 'Hash Table'
+    };
+  }
+  
+  if (problemName.includes('linked') || problemName.includes('list')) {
+    return {
+      concepts: ['Linked Lists', 'Pointer Manipulation', 'List Traversal'],
+      description: `Linked list problem focusing on pointer manipulation and list operations. Essential for understanding dynamic data structures.`,
+      reasoning: `Pattern-based analysis: Linked list keywords detected. ${submission.difficulty} difficulty suggests ${submission.difficulty === 'Easy' ? 'basic list operations' : 'complex list algorithms'}.`,
+      category: 'Linked List'
+    };
+  }
+  
+  // Default analysis for unrecognized patterns
+  return {
+    concepts: ['Problem Solving', 'Algorithm Design', 'Data Structures'],
+    description: `General problem-solving challenge requiring algorithmic thinking and appropriate data structure selection. Focus on understanding the problem constraints and optimizing the solution approach.`,
+    reasoning: `Pattern-based analysis: General problem detected. ${submission.difficulty} difficulty suggests ${submission.difficulty === 'Easy' ? 'fundamental programming concepts' : 'advanced algorithmic techniques'}.`,
+    category: 'General Algorithm'
+  };
 }
 
 export default groq;

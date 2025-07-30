@@ -51,7 +51,7 @@ interface UserProfile {
 }
 
 export default function Profile() {
-  const { user } = useAuth()
+  const { user, refreshProfile } = useAuth()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [originalProfile, setOriginalProfile] = useState<UserProfile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -87,6 +87,43 @@ export default function Profile() {
       }
     }
   }, [profile, originalProfile])
+
+  const createNewProfile = async (authUser: any) => {
+    try {
+      console.log('🆕 Creating new profile for user:', authUser.id)
+      
+      const newProfileData = {
+        id: authUser.id,
+        email: authUser.email,
+        full_name: authUser.user_metadata?.full_name || '',
+        leetcode_username: '',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }
+
+      const { data, error } = await supabase
+        .from('profiles')
+        .insert([newProfileData])
+        .select()
+        .single()
+
+      if (error) {
+        console.error('❌ Error creating profile:', error)
+        setError('Failed to create profile. Please try again.')
+        return
+      }
+
+      console.log('✅ New profile created successfully:', data)
+      setProfile(data)
+      setOriginalProfile(data)
+      setSuccess('Welcome! Please complete your profile setup.')
+      setTimeout(() => setSuccess(''), 5000)
+      
+    } catch (error) {
+      console.error('💥 Unexpected error creating profile:', error)
+      setError('An unexpected error occurred while creating your profile')
+    }
+  }
 
   const loadProfile = async () => {
     console.log('🔍 Starting profile data fetch...')
@@ -131,8 +168,8 @@ export default function Profile() {
         })
         
         if (error.code === 'PGRST116') {
-          console.log('ℹ️  Profile not found, this might be a new user')
-          setError('Profile not found. You may need to complete your initial setup.')
+          console.log('ℹ️  Profile not found, creating new profile for user')
+          await createNewProfile(authUser)
         } else {
           setError('Failed to load profile data')
         }
@@ -239,6 +276,11 @@ export default function Profile() {
         setSuccess('Profile saved successfully!')
         setOriginalProfile(profile) // Update original to reset change detection
         setHasChanges(false)
+        
+        // Refresh the profile in auth context so other components get updated data
+        await refreshProfile()
+        console.log('🔄 Auth context profile refreshed')
+        
         setTimeout(() => setSuccess(''), 5000)
       }
     } catch (error) {
@@ -266,6 +308,35 @@ export default function Profile() {
         message="Please wait while we fetch your account settings and preferences..."
         size="lg"
       />
+    )
+  }
+
+  // Show error state
+  if (error && !profile) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
+        <Navigation currentPage="profile" />
+        <div className="max-w-6xl mx-auto px-4 py-8">
+          <Card className="shadow-xl border-0">
+            <CardBody className="p-8 text-center">
+              <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                Profile Error
+              </h2>
+              <p className="text-gray-600 mb-6">
+                {error}
+              </p>
+              <Button 
+                color="primary"
+                onPress={loadProfile}
+                isLoading={loading}
+              >
+                Try Again
+              </Button>
+            </CardBody>
+          </Card>
+        </div>
+      </div>
     )
   }
 
